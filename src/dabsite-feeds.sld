@@ -17,7 +17,6 @@
           (scm duration)
           (scm datetime)
           (dabsite db)
-          (dabsite util)
           (dabsite auth)
           (dabsite views)
           (dabsite feeds-fetcher))
@@ -50,14 +49,14 @@
         (when (and category (not (string=? category "")))
           (set! clauses
                 (cons (string-append "f.category = "
-                                     (sql-quote-literal category))
+                                     (pg-quote-literal category))
                       clauses)))
         (when (and q (> (string-length (string-trim-both q)) 0))
           (set! clauses
                 (cons (string-append
                         "to_tsvector('simple', fe.title || ' ' || fe.summary) "
                         "@@ plainto_tsquery('simple', "
-                        (sql-quote-literal q) ")")
+                        (pg-quote-literal q) ")")
                       clauses)))
         (string-join clauses " AND ")))
 
@@ -138,12 +137,12 @@
     (define (mark-entry-read! cfg id)
       (exec cfg (string-append
                   "UPDATE feed_entries SET read_at = now() WHERE id = "
-                  (sql-quote-int id))))
+                  (pg-quote-int id))))
 
     (define (mark-entry-unread! cfg id)
       (exec cfg (string-append
                   "UPDATE feed_entries SET read_at = NULL WHERE id = "
-                  (sql-quote-int id))))
+                  (pg-quote-int id))))
 
     (define (mark-all-read! cfg category)
       (let ((sql (cond
@@ -152,7 +151,7 @@
                       "UPDATE feed_entries SET read_at = now() "
                       "WHERE read_at IS NULL AND feed_id IN "
                       "(SELECT id FROM feeds WHERE category = "
-                      (sql-quote-literal category) ")"))
+                      (pg-quote-literal category) ")"))
                    (else
                     "UPDATE feed_entries SET read_at = now() WHERE read_at IS NULL"))))
         (exec cfg sql)))
@@ -162,12 +161,12 @@
       ;; is based on fetched_at — the same field that drives display
       ;; ordering — so what looks "old" in the list is what gets dismissed.
       (let* ((cutoff (string-append
-                       "now() - interval '" (sql-quote-int days) " days'"))
+                       "now() - interval '" (pg-quote-int days) " days'"))
              (cat-clause (cond
                            ((and category (not (string=? category "")))
                             (string-append
                               "AND feed_id IN (SELECT id FROM feeds WHERE category = "
-                              (sql-quote-literal category) ") "))
+                              (pg-quote-literal category) ") "))
                            (else "")))
              (sql (string-append
                     "UPDATE feed_entries SET read_at = now() "
@@ -199,7 +198,7 @@
       (exec cfg
         (string-append
           "INSERT INTO categories (name, sort_order) VALUES ("
-          (sql-quote-literal name) ", " (sql-quote-int sort-order) ") "
+          (pg-quote-literal name) ", " (pg-quote-int sort-order) ") "
           "ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order")))
 
     ;; --- admin (feeds CRUD) ---
@@ -223,7 +222,7 @@
       (exec cfg
         (string-append
           "INSERT INTO categories (name, sort_order) VALUES ("
-          (sql-quote-literal category) ", 100) "
+          (pg-quote-literal category) ", 100) "
           "ON CONFLICT (name) DO NOTHING")))
 
     (define (add-feed! cfg url title label category refresh-seconds)
@@ -231,35 +230,35 @@
       (exec cfg
         (string-append
           "INSERT INTO feeds (url, title, label, category, refresh_seconds) VALUES ("
-          (sql-quote-literal url) ", "
-          (sql-quote-literal title) ", "
-          (sql-quote-literal label) ", "
-          (sql-quote-literal category) ", "
-          (sql-quote-int refresh-seconds) ") "
+          (pg-quote-literal url) ", "
+          (pg-quote-literal title) ", "
+          (pg-quote-literal label) ", "
+          (pg-quote-literal category) ", "
+          (pg-quote-int refresh-seconds) ") "
           "ON CONFLICT (url) DO NOTHING")))
 
     (define (delete-feed! cfg id)
       (exec cfg (string-append "DELETE FROM feeds WHERE id = "
-                               (sql-quote-int id))))
+                               (pg-quote-int id))))
 
     (define (toggle-feed! cfg id)
       (exec cfg (string-append "UPDATE feeds SET enabled = NOT enabled "
-                               "WHERE id = " (sql-quote-int id))))
+                               "WHERE id = " (pg-quote-int id))))
 
     (define (force-refresh! cfg id)
       (exec cfg (string-append "UPDATE feeds SET last_fetched_at = NULL, "
                                "failure_count = 0 "
-                               "WHERE id = " (sql-quote-int id))))
+                               "WHERE id = " (pg-quote-int id))))
 
     (define (set-refresh-seconds! cfg id refresh-seconds)
       (exec cfg (string-append "UPDATE feeds SET refresh_seconds = "
-                               (sql-quote-int refresh-seconds)
-                               " WHERE id = " (sql-quote-int id))))
+                               (pg-quote-int refresh-seconds)
+                               " WHERE id = " (pg-quote-int id))))
 
     (define (set-min-entries! cfg id n)
       (exec cfg (string-append "UPDATE feeds SET min_entries = "
-                               (sql-quote-int n)
-                               " WHERE id = " (sql-quote-int id))))
+                               (pg-quote-int n)
+                               " WHERE id = " (pg-quote-int id))))
 
     ;; --- skip patterns ---
 
@@ -280,13 +279,13 @@
       (exec cfg
         (string-append
           "INSERT INTO feed_skip_patterns (pattern, kind) VALUES ("
-          (sql-quote-literal pattern) ", "
-          (sql-quote-literal kind) ") "
+          (pg-quote-literal pattern) ", "
+          (pg-quote-literal kind) ") "
           "ON CONFLICT (kind, pattern) DO NOTHING")))
 
     (define (delete-skip-pattern! cfg id)
       (exec cfg (string-append "DELETE FROM feed_skip_patterns WHERE id = "
-                               (sql-quote-int id))))
+                               (pg-quote-int id))))
 
     (define (title-matches-skip? title patterns)
       ;; patterns is (kind . pattern) list. Returns #t if any matches.
@@ -334,12 +333,12 @@
       (exec cfg
         (string-append
           "UPDATE feeds SET last_fetched_at = now(), last_error = "
-          (cond (error-msg (sql-quote-literal error-msg))
+          (cond (error-msg (pg-quote-literal error-msg))
                 (else "NULL"))
           ", failure_count = "
           (cond (error-msg "failure_count + 1")
                 (else "0"))
-          " WHERE id = " (sql-quote-int id))))
+          " WHERE id = " (pg-quote-int id))))
 
     (define (assoc-val alist key)
       (let ((p (assoc key alist))) (if p (cdr p) #f)))
@@ -382,7 +381,7 @@
                ((null? ks) #t)
                (else
                 (when (not first?) (write-string ", " in-list))
-                (write-string (sql-quote-literal (car ks)) in-list)
+                (write-string (pg-quote-literal (car ks)) in-list)
                 (loop (cdr ks) #f))))
            (let* ((sql (string-append
                          "SELECT DISTINCT title_key FROM feed_entries "
@@ -411,14 +410,14 @@
           ((or (not guid) (string=? guid "")) #f)
           (else
            (string-append
-             "(" (sql-quote-int feed-id) ", "
-             (sql-quote-literal guid) ", "
-             (sql-quote-literal (or (assoc-val e "title") "")) ", "
-             (sql-quote-literal (or (assoc-val e "link") "")) ", "
-             (sql-quote-literal (or (assoc-val e "summary") "")) ", "
+             "(" (pg-quote-int feed-id) ", "
+             (pg-quote-literal guid) ", "
+             (pg-quote-literal (or (assoc-val e "title") "")) ", "
+             (pg-quote-literal (or (assoc-val e "link") "")) ", "
+             (pg-quote-literal (or (assoc-val e "summary") "")) ", "
              (cond
                (unix (string-append "to_timestamp("
-                                    (sql-quote-int unix) ")"))
+                                    (pg-quote-int unix) ")"))
                (else "NULL::timestamptz"))
              ")")))))
 

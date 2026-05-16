@@ -13,7 +13,6 @@
           (scm html)
           (scm uri)
           (dabsite db)
-          (dabsite util)
           (dabsite auth)
           (dabsite markdown)
           (dabsite views))
@@ -102,7 +101,7 @@
                         (pg-query c
                           (string-append
                             "SELECT 1 FROM notes WHERE name = "
-                            (sql-quote-literal name)
+                            (pg-quote-literal name)
                             " LIMIT 1")))))))
         (pair? rows)))
 
@@ -116,7 +115,7 @@
                             "to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created, "
                             "to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
                             "FROM notes WHERE name = "
-                            (sql-quote-literal name)
+                            (pg-quote-literal name)
                             " LIMIT 1")))))))
         (if (pair? rows) (car rows) #f)))
 
@@ -130,7 +129,7 @@
                        (string-append
                          "WHERE to_tsvector('simple', name || ' ' || body) "
                          "@@ plainto_tsquery('simple', "
-                         (sql-quote-literal q) ") "))
+                         (pg-quote-literal q) ") "))
                       (else "")))
              (order "ORDER BY updated_at DESC LIMIT 200")
              (sql (string-append base where order)))
@@ -144,16 +143,16 @@
           (pg-exec c
             (string-append
               "INSERT INTO notes (name, body) VALUES ("
-              (sql-quote-literal name) ", "
-              (sql-quote-literal body) ")")))))
+              (pg-quote-literal name) ", "
+              (pg-quote-literal body) ")")))))
 
     (define (update-note! cfg name body)
       (with-db cfg
         (lambda (c)
           (pg-exec c
             (string-append
-              "UPDATE notes SET body = " (sql-quote-literal body)
-              " WHERE name = " (sql-quote-literal name))))))
+              "UPDATE notes SET body = " (pg-quote-literal body)
+              " WHERE name = " (pg-quote-literal name))))))
 
     (define (delete-note! cfg name)
       (with-db cfg
@@ -161,7 +160,7 @@
           (pg-exec c
             (string-append
               "DELETE FROM notes WHERE name = "
-              (sql-quote-literal name))))))
+              (pg-quote-literal name))))))
 
     (define (allocate-name cfg)
       ;; Generate random names until one is free. With 64^3 names, this

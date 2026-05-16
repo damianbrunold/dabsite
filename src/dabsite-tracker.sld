@@ -13,7 +13,6 @@
           (scm html)
           (scm uri)
           (dabsite db)
-          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-tracker-routes!
@@ -161,7 +160,7 @@
       (let ((rs (rows cfg
                   (string-append
                     "SELECT id FROM tracker_topics WHERE name = "
-                    (sql-quote-literal name)
+                    (pg-quote-literal name)
                     " LIMIT 1"))))
         (cond
           ((pair? rs)
@@ -179,20 +178,20 @@
                (let ((res (pg-query c
                             (string-append
                               "INSERT INTO tracker_topics (name) VALUES ("
-                              (sql-quote-literal name)
+                              (pg-quote-literal name)
                               ") RETURNING id"))))
                  (string->number (vector-ref (car (pg-result-rows res)) 0)))))))))
 
     (define (create-topic! cfg name)
       (exec cfg (string-append
                   "INSERT INTO tracker_topics (name) VALUES ("
-                  (sql-quote-literal name)
+                  (pg-quote-literal name)
                   ") ON CONFLICT (name) DO NOTHING")))
 
     (define (toggle-topic-archived! cfg id)
       (exec cfg (string-append
                   "UPDATE tracker_topics SET archived = NOT archived "
-                  "WHERE id = " (sql-quote-int id))))
+                  "WHERE id = " (pg-quote-int id))))
 
     (define (delete-topic! cfg id)
       ;; Only deletes if no entries reference this topic — the FK is
@@ -200,7 +199,7 @@
       ;; archive instead.
       (exec cfg (string-append
                   "DELETE FROM tracker_topics WHERE id = "
-                  (sql-quote-int id))))
+                  (pg-quote-int id))))
 
     ;; --- entries ---
 
@@ -216,21 +215,21 @@
                 (cons (string-append
                         "to_tsvector('simple', d.text) "
                         "@@ plainto_tsquery('simple', "
-                        (sql-quote-literal q) ")")
+                        (pg-quote-literal q) ")")
                       clauses)))
         (when (pair? topics)
           (set! clauses
                 (cons (string-append
                         "d.id IN (SELECT done_id FROM tracker_done_topics "
                         "         WHERE topic_id IN ("
-                        (string-join (map sql-quote-int topics) ", ")
+                        (string-join (map pg-quote-int topics) ", ")
                         "))")
                       clauses)))
         (cond
           ((and from-d (not (string=? from-d "")))
            (set! clauses
                  (cons (string-append
-                         "d.completed >= " (sql-quote-literal from-d)
+                         "d.completed >= " (pg-quote-literal from-d)
                          "::timestamptz")
                        clauses)))
           (apply-default-window?
@@ -243,7 +242,7 @@
         (when (and to-d (not (string=? to-d "")))
           (set! clauses
                 (cons (string-append
-                        "d.completed < (" (sql-quote-literal to-d)
+                        "d.completed < (" (pg-quote-literal to-d)
                         "::date + 1)::timestamptz")
                       clauses)))
         (string-join clauses " AND ")))
@@ -308,13 +307,13 @@
                        ((or (not completed-str) (string=? completed-str ""))
                         "now()")
                        (else
-                        (string-append (sql-quote-literal completed-str)
+                        (string-append (pg-quote-literal completed-str)
                                        "::timestamptz"))))
                    (res (pg-query c
                           (string-append
                             "INSERT INTO tracker_done (text, minutes, completed) VALUES ("
-                            (sql-quote-literal text) ", "
-                            (sql-quote-int minutes) ", "
+                            (pg-quote-literal text) ", "
+                            (pg-quote-int minutes) ", "
                             completed-sql
                             ") RETURNING id")))
                    (did (string->number (vector-ref (car (pg-result-rows res)) 0))))
@@ -325,8 +324,8 @@
                     (pg-exec c
                       (string-append
                         "INSERT INTO tracker_done_topics (done_id, topic_id) "
-                        "VALUES (" (sql-quote-int did) ", "
-                        (sql-quote-int tid) ") "
+                        "VALUES (" (pg-quote-int did) ", "
+                        (pg-quote-int tid) ") "
                         "ON CONFLICT DO NOTHING"))))
                 topic-names)
               (pg-exec c "COMMIT")
@@ -337,7 +336,7 @@
       (let* ((sel (pg-result-rows
                     (pg-query c (string-append
                                   "SELECT id FROM tracker_topics WHERE name = "
-                                  (sql-quote-literal name)
+                                  (pg-quote-literal name)
                                   " LIMIT 1")))))
         (cond
           ((pair? sel) (string->number (vector-ref (car sel) 0)))
@@ -345,13 +344,13 @@
            (let ((res (pg-query c
                         (string-append
                           "INSERT INTO tracker_topics (name) VALUES ("
-                          (sql-quote-literal name)
+                          (pg-quote-literal name)
                           ") RETURNING id"))))
              (string->number (vector-ref (car (pg-result-rows res)) 0)))))))
 
     (define (delete-entry! cfg id)
       (exec cfg (string-append "DELETE FROM tracker_done WHERE id = "
-                               (sql-quote-int id))))
+                               (pg-quote-int id))))
 
     (define (find-entry-row cfg id)
       ;; Returns the same alist shape list-entries does, plus a separate
@@ -367,7 +366,7 @@
                     "FROM tracker_done d "
                     "LEFT JOIN tracker_done_topics dt ON dt.done_id = d.id "
                     "LEFT JOIN tracker_topics t ON t.id = dt.topic_id "
-                    "WHERE d.id = " (sql-quote-int id) " "
+                    "WHERE d.id = " (pg-quote-int id) " "
                     "GROUP BY d.id"))))
         (cond ((pair? rs) (car rs)) (else #f))))
 

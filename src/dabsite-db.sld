@@ -1,12 +1,8 @@
 (define-library (dabsite db)
   (import (scheme base)
-          (scheme write)
-          (scheme file)
-          (scheme read)
-          (scm fs)
-          (srfi 1)
-          (srfi 132)
           (scm database postgres)
+          (rename (scm database migrations)
+                  (run-migrations! migrations-run!))
           (scm log))
   (export db-config
           make-db-config
@@ -53,93 +49,20 @@
 
     ;; --- Migrations ---
     ;;
-    ;; Migrations live in <migrations-dir>/NNNN_name.sql. They are applied in
-    ;; lexical order. Each filename is recorded in schema_migrations after
-    ;; successful application so it is never re-run.
-
-    (define (read-file-string path)
-      (call-with-input-file path
-        (lambda (port)
-          (let ((out (open-output-string)))
-            (let loop ()
-              (let ((c (read-char port)))
-                (cond
-                  ((eof-object? c) (get-output-string out))
-                  (else (write-char c out) (loop)))))))))
-
-    (define (sql-files dir)
-      ;; Returns a sorted list of "NNNN_name.sql" filenames (no path).
-      (let* ((all (directory-files dir))
-             (sql (filter (lambda (f)
-                            (let ((n (string-length f)))
-                              (and (>= n 4)
-                                   (string=? (substring f (- n 4) n) ".sql"))))
-                          all)))
-        (list-sort string<? sql)))
-
-    (define (applied-set conn)
-      (pg-exec conn
-        "CREATE TABLE IF NOT EXISTS schema_migrations (
-           filename text PRIMARY KEY,
-           applied_at timestamptz NOT NULL DEFAULT now()
-         )")
-      (let* ((res  (pg-query conn "SELECT filename FROM schema_migrations"))
-             (rows (pg-result-rows res)))
-        (map (lambda (row) (vector-ref row 0)) rows)))
-
-    (define (already-applied? applied name)
-      (let loop ((xs applied))
-        (cond ((null? xs) #f)
-              ((string=? (car xs) name) #t)
-              (else (loop (cdr xs))))))
-
-    (define (sql-quote-literal s)
-      ;; Minimal single-quote escape for inline SQL literals (filename).
-      (let* ((out (open-output-string)))
-        (write-char #\' out)
-        (let loop ((i 0))
-          (cond
-            ((= i (string-length s))
-             (write-char #\' out)
-             (get-output-string out))
-            (else
-             (let ((c (string-ref s i)))
-               (when (char=? c #\') (write-char #\' out))
-               (write-char c out)
-               (loop (+ i 1))))))))
-
-    (define (apply-migration! conn dir filename)
-      (let* ((path (string-append dir "/" filename))
-             (sql  (read-file-string path)))
-        (log-info "migrate" (string-append "applying " filename))
-        (pg-exec conn "BEGIN")
-        (guard (exn (#t
-                     (guard (e (#t #f)) (pg-exec conn "ROLLBACK"))
-                     (raise exn)))
-          (pg-exec conn sql)
-          (pg-exec conn
-            (string-append
-              "INSERT INTO schema_migrations (filename) VALUES ("
-              (sql-quote-literal filename)
-              ") ON CONFLICT DO NOTHING"))
-          (pg-exec conn "COMMIT"))))
+    ;; Thin wrapper over (scm database migrations): opens a pg
+    ;; connection and supplies the postgres-specific exec/query
+    ;; callbacks. Each applied filename is logged via (scm log) so
+    ;; lines end up in journald alongside everything else.
 
     (define (run-migrations! cfg dir)
       "Apply any pending SQL migrations from dir. Idempotent."
-      (when (not (directory-exists? dir))
-        (error "migrations directory does not exist" dir))
       (with-db cfg
         (lambda (conn)
-          (let ((applied (applied-set conn))
-                (files   (sql-files dir)))
-            (log-info "migrate"
-              (string-append "running migrations from " dir))
-            (for-each
-              (lambda (f)
-                (cond
-                  ((already-applied? applied f) #f)  ; skip silently
-                  (else (apply-migration! conn dir f))))
-              files)
-            (log-info "migrate" "migrations complete")))))
-
+          (log-info "migrate"
+                    (string-append "running migrations from " dir))
+          (migrations-run!
+            (lambda (sql) (pg-exec conn sql))
+            (lambda (sql) (pg-result-rows (pg-query conn sql)))
+            dir
+            `((log-proc ,(lambda (m) (log-info "migrate" m))))))))
 ))

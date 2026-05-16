@@ -10,7 +10,6 @@
           (scm net http forms)
           (scm html)
           (dabsite db)
-          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-grocery-routes!)
@@ -58,7 +57,7 @@
         (string-append
           "WITH ins AS ("
           "  INSERT INTO grocery_items (name) VALUES ("
-          (sql-quote-literal name)
+          (pg-quote-literal name)
           ")  ON CONFLICT (name) DO NOTHING RETURNING id) "
           "INSERT INTO grocery_shop_items (shop_id, item_id, position) "
           "SELECT s.id, i.id, "
@@ -69,7 +68,7 @@
     (define (delete-item! cfg id)
       (exec cfg (string-append
                   "DELETE FROM grocery_items WHERE id = "
-                  (sql-quote-int id))))
+                  (pg-quote-int id))))
 
     ;; ---- shops ----
 
@@ -81,7 +80,7 @@
       (let ((rs (alist-rows cfg
                   (string-append
                     "SELECT id::text AS id, name FROM grocery_shops "
-                    "WHERE id = " (sql-quote-int id)))))
+                    "WHERE id = " (pg-quote-int id)))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
     (define (create-shop! cfg name)
@@ -91,7 +90,7 @@
         (string-append
           "WITH ins AS ("
           "  INSERT INTO grocery_shops (name) VALUES ("
-          (sql-quote-literal name)
+          (pg-quote-literal name)
           ")  ON CONFLICT (name) DO NOTHING RETURNING id) "
           "INSERT INTO grocery_shop_items (shop_id, item_id, position) "
           "SELECT s.id, i.id, "
@@ -101,13 +100,13 @@
     (define (delete-shop! cfg id)
       (exec cfg (string-append
                   "DELETE FROM grocery_shops WHERE id = "
-                  (sql-quote-int id))))
+                  (pg-quote-int id))))
 
     (define (rename-shop! cfg id name)
       (exec cfg (string-append
                   "UPDATE grocery_shops SET name = "
-                  (sql-quote-literal name)
-                  " WHERE id = " (sql-quote-int id))))
+                  (pg-quote-literal name)
+                  " WHERE id = " (pg-quote-int id))))
 
     ;; Items in a shop, in their saved position. Default shop (id #f)
     ;; returns every item alphabetically.
@@ -122,7 +121,7 @@
              "       si.position::text AS position "
              "FROM grocery_shop_items si "
              "JOIN grocery_items i ON i.id = si.item_id "
-             "WHERE si.shop_id = " (sql-quote-int shop-id) " "
+             "WHERE si.shop_id = " (pg-quote-int shop-id) " "
              "ORDER BY si.position, lower(i.name)")))))
 
     (define (items-not-in-shop cfg shop-id)
@@ -130,7 +129,7 @@
         (string-append
           "SELECT i.id::text AS id, i.name FROM grocery_items i "
           "WHERE NOT EXISTS (SELECT 1 FROM grocery_shop_items si "
-          "  WHERE si.shop_id = " (sql-quote-int shop-id)
+          "  WHERE si.shop_id = " (pg-quote-int shop-id)
           "  AND si.item_id = i.id) "
           "ORDER BY lower(i.name)")))
 
@@ -139,17 +138,17 @@
       (exec cfg
         (string-append
           "INSERT INTO grocery_shop_items (shop_id, item_id, position) "
-          "VALUES (" (sql-quote-int shop-id) ", "
-          (sql-quote-int item-id) ", "
+          "VALUES (" (pg-quote-int shop-id) ", "
+          (pg-quote-int item-id) ", "
           "(SELECT COALESCE(MAX(position), 0) + 1 "
           " FROM grocery_shop_items WHERE shop_id = "
-          (sql-quote-int shop-id) ")) ON CONFLICT DO NOTHING")))
+          (pg-quote-int shop-id) ")) ON CONFLICT DO NOTHING")))
 
     (define (remove-item-from-shop! cfg shop-id item-id)
       (exec cfg (string-append
                   "DELETE FROM grocery_shop_items WHERE shop_id = "
-                  (sql-quote-int shop-id)
-                  " AND item_id = " (sql-quote-int item-id))))
+                  (pg-quote-int shop-id)
+                  " AND item_id = " (pg-quote-int item-id))))
 
     (define (set-shop-order! cfg shop-id item-ids)
       ;; Replaces positions of all listed items with 1..N. Items not in
@@ -169,8 +168,8 @@
                    (string-append
                      "UPDATE grocery_shop_items SET position = "
                      (number->string pos)
-                     " WHERE shop_id = " (sql-quote-int shop-id)
-                     " AND item_id = " (sql-quote-int (car ids))))
+                     " WHERE shop_id = " (pg-quote-int shop-id)
+                     " AND item_id = " (pg-quote-int (car ids))))
                  (loop (cdr ids) (+ pos 1)))))
             (pg-exec c "COMMIT")))))
 
@@ -181,10 +180,10 @@
              (rs  (rows cfg
                     (string-append
                       "WITH me AS (SELECT position FROM grocery_shop_items "
-                      "            WHERE shop_id = " (sql-quote-int shop-id)
-                      "            AND item_id = " (sql-quote-int item-id) "), "
+                      "            WHERE shop_id = " (pg-quote-int shop-id)
+                      "            AND item_id = " (pg-quote-int item-id) "), "
                       "  nbr AS (SELECT item_id, position FROM grocery_shop_items "
-                      "          WHERE shop_id = " (sql-quote-int shop-id)
+                      "          WHERE shop_id = " (pg-quote-int shop-id)
                       "          AND position " op " (SELECT position FROM me) "
                       "          ORDER BY position " ord " LIMIT 1) "
                       "SELECT (SELECT position FROM me)::text, "
@@ -204,10 +203,10 @@
                (exec cfg
                  (string-append
                    "UPDATE grocery_shop_items SET position = " nbr-pos
-                   " WHERE shop_id = " (sql-quote-int shop-id)
-                   " AND item_id = " (sql-quote-int item-id) "; "
+                   " WHERE shop_id = " (pg-quote-int shop-id)
+                   " AND item_id = " (pg-quote-int item-id) "; "
                    "UPDATE grocery_shop_items SET position = " my-pos
-                   " WHERE shop_id = " (sql-quote-int shop-id)
+                   " WHERE shop_id = " (pg-quote-int shop-id)
                    " AND item_id = " nbr-id))))))))
 
     ;; ---- lists ----
@@ -234,7 +233,7 @@
                     "       to_char(l.created_at, 'YYYY-MM-DD HH24:MI') AS created "
                     "FROM grocery_lists l "
                     "LEFT JOIN grocery_shops s ON s.id = l.shop_id "
-                    "WHERE l.id = " (sql-quote-int id)))))
+                    "WHERE l.id = " (pg-quote-int id)))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
     (define (create-list! cfg shop-id)
@@ -244,7 +243,7 @@
           (let ((res (pg-query c
                        (string-append
                          "INSERT INTO grocery_lists (shop_id) VALUES ("
-                         (cond (shop-id (sql-quote-int shop-id))
+                         (cond (shop-id (pg-quote-int shop-id))
                                (else "NULL"))
                          ") RETURNING id"))))
             (string->number (vector-ref (car (pg-result-rows res)) 0))))))
@@ -252,7 +251,7 @@
     (define (delete-list! cfg id)
       (exec cfg (string-append
                   "DELETE FROM grocery_lists WHERE id = "
-                  (sql-quote-int id))))
+                  (pg-quote-int id))))
 
     ;; Entries on a list, ordered per the list's shop. For the default
     ;; shop, alphabetical.
@@ -261,7 +260,7 @@
                      (shop-id
                       (string-append
                         "ORDER BY (SELECT si.position FROM grocery_shop_items si "
-                        "          WHERE si.shop_id = " (sql-quote-int shop-id)
+                        "          WHERE si.shop_id = " (pg-quote-int shop-id)
                         "          AND si.item_id = e.item_id), "
                         "         lower(i.name)"))
                      (else "ORDER BY lower(i.name)"))))
@@ -272,15 +271,15 @@
             "       CASE WHEN e.bought THEN 'yes' ELSE 'no' END AS bought "
             "FROM grocery_list_entries e "
             "JOIN grocery_items i ON i.id = e.item_id "
-            "WHERE e.list_id = " (sql-quote-int list-id) " "
+            "WHERE e.list_id = " (pg-quote-int list-id) " "
             order))))
 
     (define (add-or-inc! cfg list-id item-id)
       (exec cfg
         (string-append
           "INSERT INTO grocery_list_entries (list_id, item_id, qty) VALUES ("
-          (sql-quote-int list-id) ", "
-          (sql-quote-int item-id) ", 1) "
+          (pg-quote-int list-id) ", "
+          (pg-quote-int item-id) ", 1) "
           "ON CONFLICT (list_id, item_id) "
           "DO UPDATE SET qty = grocery_list_entries.qty + 1, bought = false")))
 
@@ -289,7 +288,7 @@
       (exec cfg
         (string-append
           "WITH upd AS (UPDATE grocery_list_entries SET qty = qty - 1 "
-          "             WHERE id = " (sql-quote-int entry-id) " "
+          "             WHERE id = " (pg-quote-int entry-id) " "
           "             RETURNING id, qty) "
           "DELETE FROM grocery_list_entries WHERE id IN "
           "(SELECT id FROM upd WHERE qty <= 0)")))
@@ -297,17 +296,17 @@
     (define (toggle-bought! cfg entry-id)
       (exec cfg (string-append
                   "UPDATE grocery_list_entries SET bought = NOT bought "
-                  "WHERE id = " (sql-quote-int entry-id))))
+                  "WHERE id = " (pg-quote-int entry-id))))
 
     (define (delete-entry! cfg entry-id)
       (exec cfg (string-append
                   "DELETE FROM grocery_list_entries WHERE id = "
-                  (sql-quote-int entry-id))))
+                  (pg-quote-int entry-id))))
 
     (define (clear-bought! cfg list-id)
       (exec cfg (string-append
                   "DELETE FROM grocery_list_entries WHERE list_id = "
-                  (sql-quote-int list-id) " AND bought = true")))
+                  (pg-quote-int list-id) " AND bought = true")))
 
     ;; ============================================================
     ;; Views

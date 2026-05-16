@@ -16,7 +16,6 @@
           (scm html)
           (scm log)
           (dabsite db)
-          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-files-routes!
@@ -223,7 +222,7 @@
                       (pg-query c
                         (string-append
                           "SELECT COUNT(*)::text FROM files WHERE sha256 = "
-                          (sql-quote-literal sha))))))))
+                          (pg-quote-literal sha))))))))
         (cond ((pair? rs) (string->number (vector-ref (car rs) 0)))
               (else 0))))
 
@@ -234,14 +233,14 @@
         (when (and (string? q) (> (string-length (string-trim-both q)) 0))
           (set! where
                 (cons (string-append
-                        "(name ILIKE '%' || " (sql-quote-literal q)
+                        "(name ILIKE '%' || " (pg-quote-literal q)
                         " || '%' OR note ILIKE '%' || "
-                        (sql-quote-literal q) " || '%')")
+                        (pg-quote-literal q) " || '%')")
                       where)))
         (when (and vis (member vis '("public" "private") string=?))
           (set! where
                 (cons (string-append "visibility = "
-                                     (sql-quote-literal vis))
+                                     (pg-quote-literal vis))
                       where)))
         (alist-rows cfg
           (string-append
@@ -256,7 +255,7 @@
                   (string-append
                     "SELECT id::text AS id, name, mime, size::text AS size, "
                     "       sha256, visibility, note "
-                    "FROM files WHERE id = " (sql-quote-int id)))))
+                    "FROM files WHERE id = " (pg-quote-int id)))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
     (define (find-file-by-public-name cfg name)
@@ -265,7 +264,7 @@
                     "SELECT id::text AS id, name, mime, size::text AS size, "
                     "       sha256, visibility, note "
                     "FROM files WHERE visibility = 'public' AND name = "
-                    (sql-quote-literal name)
+                    (pg-quote-literal name)
                     " LIMIT 1"))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
@@ -276,27 +275,27 @@
             (string-append
               "INSERT INTO files (name, mime, size, sha256, visibility, note) "
               "VALUES ("
-              (sql-quote-literal name) ", "
-              (sql-quote-literal mime) ", "
+              (pg-quote-literal name) ", "
+              (pg-quote-literal mime) ", "
               (number->string size) ", "
-              (sql-quote-literal sha) ", "
-              (sql-quote-literal vis) ", "
-              (sql-quote-literal note) ")")))))
+              (pg-quote-literal sha) ", "
+              (pg-quote-literal vis) ", "
+              (pg-quote-literal note) ")")))))
 
     (define (delete-file-row! cfg id)
       (exec cfg (string-append "DELETE FROM files WHERE id = "
-                               (sql-quote-int id))))
+                               (pg-quote-int id))))
 
     (define (toggle-file-visibility! cfg id)
       (exec cfg (string-append
                   "UPDATE files SET visibility = CASE visibility "
                   "WHEN 'public' THEN 'private' ELSE 'public' END "
-                  "WHERE id = " (sql-quote-int id))))
+                  "WHERE id = " (pg-quote-int id))))
 
     (define (update-note! cfg id note)
       (exec cfg (string-append
-                  "UPDATE files SET note = " (sql-quote-literal note)
-                  " WHERE id = " (sql-quote-int id))))
+                  "UPDATE files SET note = " (pg-quote-literal note)
+                  " WHERE id = " (pg-quote-int id))))
 
     ;; ---- DB helpers ----
     (define (alist-rows cfg sql)

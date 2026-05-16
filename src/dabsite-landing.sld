@@ -9,7 +9,6 @@
           (scm net http forms)
           (scm html)
           (dabsite db)
-          (dabsite util)
           (dabsite auth)
           (dabsite views)
           (dabsite markdown))
@@ -30,7 +29,7 @@
                            (string-append
                              "SELECT slug, title, format, source, html_cache "
                              "FROM pages WHERE slug = "
-                             (sql-quote-literal slug)
+                             (pg-quote-literal slug)
                              " LIMIT 1")))))))
         (if (pair? rows) (car rows) #f)))
 
@@ -78,11 +77,11 @@
             (pg-exec c
               (string-append
                 "INSERT INTO pages (slug, title, format, source, html_cache, updated_at) VALUES ("
-                (sql-quote-literal slug) ", "
-                (sql-quote-literal title) ", "
-                (sql-quote-literal format) ", "
-                (sql-quote-literal source) ", "
-                (sql-quote-literal html) ", now()) "
+                (pg-quote-literal slug) ", "
+                (pg-quote-literal title) ", "
+                (pg-quote-literal format) ", "
+                (pg-quote-literal source) ", "
+                (pg-quote-literal html) ", now()) "
                 "ON CONFLICT (slug) DO UPDATE SET "
                 "title = EXCLUDED.title, "
                 "format = EXCLUDED.format, "
@@ -104,9 +103,9 @@
                  (pg-exec c
                    (string-append
                      "UPDATE pages SET html_cache = "
-                     (sql-quote-literal html)
+                     (pg-quote-literal html)
                      ", updated_at = now() WHERE slug = "
-                     (sql-quote-literal (page-field page "slug"))))))
+                     (pg-quote-literal (page-field page "slug"))))))
              html)))))
 
     ;; --- views ---
@@ -243,7 +242,7 @@
           (pg-exec c
             (string-append
               "DELETE FROM pages WHERE slug = "
-              (sql-quote-literal slug))))))
+              (pg-quote-literal slug))))))
 
     (define (handle-edit-save req params cfg auth)
       (let* ((slug (params-ref params "slug"))

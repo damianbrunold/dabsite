@@ -11,7 +11,6 @@
           (scm net http forms)
           (scm html)
           (dabsite db)
-          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-shortener-routes!
@@ -75,7 +74,7 @@
                       (pg-query c
                         (string-append
                           "SELECT target FROM short_urls WHERE code = "
-                          (sql-quote-literal code))))))))
+                          (pg-quote-literal code))))))))
         (cond
           ((pair? rs) (vector-ref (car rs) 0))
           (else #f))))
@@ -89,7 +88,7 @@
             (pg-exec c
               (string-append
                 "UPDATE short_urls SET hits = hits + 1 WHERE code = "
-                (sql-quote-literal code)))))))
+                (pg-quote-literal code)))))))
 
     (define (code-exists? cfg code)
       (let ((rs (with-db cfg
@@ -98,7 +97,7 @@
                       (pg-query c
                         (string-append
                           "SELECT 1 FROM short_urls WHERE code = "
-                          (sql-quote-literal code) " LIMIT 1")))))))
+                          (pg-quote-literal code) " LIMIT 1")))))))
         (pair? rs)))
 
     (define (allocate-code cfg)
@@ -117,9 +116,9 @@
           (pg-exec c
             (string-append
               "INSERT INTO short_urls (code, target, note) VALUES ("
-              (sql-quote-literal code) ", "
-              (sql-quote-literal target) ", "
-              (sql-quote-literal note) ")")))))
+              (pg-quote-literal code) ", "
+              (pg-quote-literal target) ", "
+              (pg-quote-literal note) ")")))))
 
     (define (delete-code! cfg code)
       (with-db cfg
@@ -127,7 +126,7 @@
           (pg-exec c
             (string-append
               "DELETE FROM short_urls WHERE code = "
-              (sql-quote-literal code))))))
+              (pg-quote-literal code))))))
 
     (define (list-codes cfg)
       (with-db cfg
