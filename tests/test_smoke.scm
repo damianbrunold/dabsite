@@ -28,7 +28,7 @@
 (define port 18099)
 (define base (string-append "http://127.0.0.1:" (number->string port)))
 
-(define router (build-static-router "static" #f))
+(define router (build-static-router "static"))
 
 (define server-handle
   (tcp-http-serve port

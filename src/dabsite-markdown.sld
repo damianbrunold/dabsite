@@ -3,7 +3,7 @@
           (scheme write)
           (scheme char)
           (srfi 13)
-          (dabsite util))
+          (scm html))
   (export render-markdown)
   (begin
 

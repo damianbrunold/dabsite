@@ -12,12 +12,13 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
+          (scm net http multipart)
+          (scm html)
+          (scm log)
           (dabsite db)
           (dabsite util)
           (dabsite auth)
-          (dabsite multipart)
-          (dabsite views)
-          (dabsite log))
+          (dabsite views))
   (export install-files-routes!
           ;; exposed for tests
           mime-from-name
@@ -468,9 +469,6 @@
           ((string=? (part-ref (car ps) 'name) name) (car ps))
           (else (loop (cdr ps))))))
 
-    (define (parse-multipart-bv body boundary)
-      (parse-multipart-bytes body boundary))
-
     (define (part-text parts name)
       ;; Decode the named part's body bytevector as UTF-8 text. Returns
       ;; #f if the part is missing.
@@ -537,7 +535,7 @@
           ((> (bytevector-length body-bv) max-upload-bytes)
            (render-error 413 "Upload too large (limit is 25 MB)."))
           (else
-           (let* ((parts     (parse-multipart-bv body-bv boundary))
+           (let* ((parts     (parse-multipart-bytes body-bv boundary))
                   (file-part (find-part parts "file"))
                   (name-override (string-trim-both
                                    (or (part-text parts "name") "")))

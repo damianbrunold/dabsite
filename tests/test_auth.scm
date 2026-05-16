@@ -4,7 +4,6 @@
 (module-search-path! (cons "src" (module-search-path)))
 
 (import (dabsite auth)
-        (dabsite util)
         (scm crypto)
         (scm net http request)
         (scm test)

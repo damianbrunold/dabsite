@@ -11,13 +11,16 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
+          (scm net http forms)
+          (scm html)
+          (scm log)
+          (scm duration)
+          (scm datetime)
           (dabsite db)
           (dabsite util)
           (dabsite auth)
           (dabsite views)
-          (dabsite feeds-parser)
-          (dabsite feeds-fetcher)
-          (dabsite log))
+          (dabsite feeds-fetcher))
   (export install-feed-routes!
           start-feed-scheduler!
           ;; exposed for unit tests

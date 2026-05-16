@@ -1,7 +1,7 @@
 (define-library (dabsite views)
   (import (scheme base)
           (scheme write)
-          (dabsite util)
+          (scm html)
           (dabsite auth)
           (scm net http response))
   (export render-page

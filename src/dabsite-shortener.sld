@@ -8,6 +8,8 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
+          (scm net http forms)
+          (scm html)
           (dabsite db)
           (dabsite util)
           (dabsite auth)

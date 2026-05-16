@@ -20,7 +20,7 @@
           (dabsite tracker)
           (dabsite files)
           (dabsite grocery)
-          (dabsite log))
+          (scm log))
   (export build-router
           build-static-router
           serve)

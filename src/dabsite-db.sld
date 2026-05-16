@@ -7,7 +7,7 @@
           (srfi 1)
           (srfi 132)
           (scm database postgres)
-          (dabsite log))
+          (scm log))
   (export db-config
           make-db-config
           with-db

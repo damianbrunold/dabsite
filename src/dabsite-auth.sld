@@ -10,7 +10,8 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (dabsite util))
+          (scm net http forms)
+          (scm net http cookies))
   (export make-auth
           auth?
           authed?
@@ -78,7 +79,7 @@
                                      (auth-pbkdf2-salt auth)
                                      (auth-pbkdf2-iter auth)
                                      (bytevector-length (auth-pbkdf2-hash auth)))))
-        (constant-time-bv-equal? computed (auth-pbkdf2-hash auth))))
+        (constant-time-bytevector=? computed (auth-pbkdf2-hash auth))))
 
     ;; --- cookie tokens ---
     ;;
@@ -116,7 +117,7 @@
                        (pl   (base64-decode b64))
                        (calc (sign-bytes (auth-cookie-secret auth) pl))
                        (got  (hex->bytevector mac)))
-                  (constant-time-bv-equal? calc got)))))))))
+                  (constant-time-bytevector=? calc got)))))))))
 
     ;; --- request inspection ---
 
