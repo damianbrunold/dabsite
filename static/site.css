@@ -877,6 +877,11 @@ form.poll-form .choice.no    input[type=radio]:checked + span { color: var(--dan
     display: inline-flex;
     align-items: center;
     cursor: pointer;
+    /* Push the toggle (and the .auth block after it) to the right edge
+     * of nav.top. When the link list is present its `flex: 1` already
+     * does this; for the unauthed page there is no link list, so the
+     * auto-margin acts as the spacer. */
+    margin-left: auto;
 }
 
 .theme-toggle:hover {
