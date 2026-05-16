@@ -173,6 +173,24 @@
                     "AND fetched_at < " cutoff)))
         (exec cfg sql)))
 
+    ;; Cap of read entries kept per label. Unread entries are never pruned.
+    ;; Feeds without a label are bucketed per-feed so an unlabelled spammy
+    ;; feed can't crowd out an unlabelled quiet one.
+    (define read-entries-per-label-cap 100)
+
+    (define (prune-read-entries! cfg)
+      (exec cfg
+        (string-append
+          "DELETE FROM feed_entries WHERE id IN ("
+          "  SELECT id FROM ("
+          "    SELECT fe.id, row_number() OVER ("
+          "      PARTITION BY COALESCE(NULLIF(f.label, ''), "
+          "                            'feed#' || f.id::text) "
+          "      ORDER BY fe.read_at DESC, fe.id DESC) AS rn "
+          "    FROM feed_entries fe JOIN feeds f ON f.id = fe.feed_id "
+          "    WHERE fe.read_at IS NOT NULL"
+          "  ) t WHERE rn > " (number->string read-entries-per-label-cap) ")")))
+
     (define (update-category-order! cfg name sort-order)
       ;; Upserts a category row. Used by the admin UI to reorder.
       (exec cfg
@@ -468,7 +486,10 @@
                    (log-warn "feeds"
                      (string-append "error " title " — "
                                     (fetch-result-error r))))))))
-          due)))
+          due)
+        (guard (exn (#t (log-error "feeds"
+                          "prune-read-entries! failed; continuing")))
+          (prune-read-entries! cfg))))
 
     (define scheduler-tick-seconds 30)
 

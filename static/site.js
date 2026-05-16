@@ -59,6 +59,26 @@
         });
     }
     document.querySelectorAll('li.feed-entry form.mark').forEach(bind);
+
+    // Clicking the entry link opens the article in a new tab; treat that as
+    // having read it. Mark the entry read and remove it in place, same as
+    // clicking the ✓ button. Without JS the link still works (the entry
+    // simply stays unread until marked explicitly).
+    document.querySelectorAll('li.feed-entry a.entry-link').forEach(
+        function (a) {
+            a.addEventListener('click', function () {
+                var li = a.closest('li.feed-entry');
+                if (!li || li.classList.contains('is-read')) return;
+                var id = li.getAttribute('data-id');
+                if (!id) return;
+                fetch('/feeds/entry/' + encodeURIComponent(id) + '/read',
+                      { method: 'POST', credentials: 'same-origin',
+                        keepalive: true });
+                li.style.transition = 'opacity 200ms';
+                li.style.opacity = '0';
+                setTimeout(function () { li.remove(); }, 220);
+            });
+        });
 })();
 
 // Tracker quick-add: prefix parsing inside the "what" textarea.
