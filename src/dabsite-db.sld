@@ -1,4 +1,4 @@
-(define-library (damian db)
+(define-library (dabsite db)
   (import (scheme base)
           (scheme write)
           (scheme file)
@@ -7,7 +7,7 @@
           (srfi 1)
           (srfi 132)
           (scm database postgres)
-          (damian log))
+          (dabsite log))
   (export db-config
           make-db-config
           with-db

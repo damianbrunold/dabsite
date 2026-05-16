@@ -2,7 +2,7 @@
 ;;
 ;; Boots the router in a background thread on an ephemeral port and verifies
 ;; the basic routes work. Postgres is NOT required for this test — we wire
-;; the router directly via (damian app)'s build-router/serve and skip
+;; the router directly via (dabsite app)'s build-router/serve and skip
 ;; run-migrations!.
 ;;
 ;; Run from the project root: scm tests/test_smoke.scm
@@ -14,7 +14,7 @@
 
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian app)
+(import (dabsite app)
         (scm test)
         (scm net http server)
         (scm net http route)

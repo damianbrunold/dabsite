@@ -1,4 +1,4 @@
-(define-library (damian feeds-fetcher)
+(define-library (dabsite feeds-fetcher)
   (import (scheme base)
           (scheme write)
           (scheme file)
@@ -7,8 +7,8 @@
           (scm fs)
           (scm net http client)
           (scm net http response)
-          (damian feeds-parser)
-          (damian util))
+          (dabsite feeds-parser)
+          (dabsite util))
   (export fetch-feed
           fetch-result?
           fetch-result-ok?
@@ -34,7 +34,7 @@
     (define (ok title entries) (make-fetch-result #t #f title entries))
 
     (define ua-header
-      '(("User-Agent" . "damian_www/1.0 (+https://www.damianbrunold.ch)")
+      '(("User-Agent" . "dabsite/1.0 (+https://www.damianbrunold.ch)")
         ("Accept"     . "application/atom+xml, application/rss+xml, application/xml;q=0.9, */*;q=0.8")))
 
     ;; The .NET HttpClient decodes the body to a .NET string for us, so by

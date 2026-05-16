@@ -1,5 +1,5 @@
 [Unit]
-Description=damian_www scheme webapp
+Description=dabsite scheme webapp
 After=network-online.target postgresql.service
 Wants=network-online.target
 # If the health-check decides to restart us, that's fine — but if we
@@ -11,7 +11,7 @@ StartLimitBurst=5
 Type=simple
 User=dab
 Group=dab
-WorkingDirectory=/home/dab/www/damian_www
+WorkingDirectory=/home/dab/www/dabsite
 ExecStart=/home/dab/bin/scm bin/server.scm config.scm
 
 # Restart whenever the process exits, not only on failure. Combined with
@@ -24,7 +24,7 @@ RestartSec=3s
 # to drain in-flight requests before SIGKILL.
 TimeoutStopSec=15s
 
-# Logs go to journald — read with: journalctl -u damian-www -f
+# Logs go to journald — read with: journalctl -u dabsite -f
 StandardOutput=journal
 StandardError=journal
 
@@ -34,7 +34,7 @@ PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=read-only
 # The app needs to write to log/ and data/ (uploaded files).
-ReadWritePaths=/home/dab/www/damian_www/log /home/dab/www/damian_www/data
+ReadWritePaths=/home/dab/www/dabsite/log /home/dab/www/dabsite/data
 
 [Install]
 WantedBy=multi-user.target

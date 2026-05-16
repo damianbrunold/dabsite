@@ -1,4 +1,4 @@
-(define-library (damian multipart)
+(define-library (dabsite multipart)
   (import (scheme base)
           (scheme write)
           (srfi 1)

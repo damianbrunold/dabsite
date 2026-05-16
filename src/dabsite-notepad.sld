@@ -1,4 +1,4 @@
-(define-library (damian notepad)
+(define-library (dabsite notepad)
   (import (scheme base)
           (scheme write)
           (scheme char)
@@ -9,11 +9,11 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian db)
-          (damian util)
-          (damian auth)
-          (damian markdown)
-          (damian views))
+          (dabsite db)
+          (dabsite util)
+          (dabsite auth)
+          (dabsite markdown)
+          (dabsite views))
   (export install-notepad-routes!)
   (begin
 

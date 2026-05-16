@@ -1,4 +1,4 @@
-(define-library (damian feeds-parser)
+(define-library (dabsite feeds-parser)
   (import (scheme base)
           (scheme write)
           (scheme char)

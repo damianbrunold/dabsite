@@ -1,4 +1,4 @@
-(define-library (damian util)
+(define-library (dabsite util)
   (import (scheme base)
           (scheme write)
           (scheme char)

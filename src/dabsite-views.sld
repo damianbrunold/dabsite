@@ -1,8 +1,8 @@
-(define-library (damian views)
+(define-library (dabsite views)
   (import (scheme base)
           (scheme write)
-          (damian util)
-          (damian auth)
+          (dabsite util)
+          (dabsite auth)
           (scm net http response))
   (export render-page
           html-response

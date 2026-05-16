@@ -1,9 +1,9 @@
-;; Unit tests for (damian util). No DB, no network.
+;; Unit tests for (dabsite util). No DB, no network.
 
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian util)
+(import (dabsite util)
         (scm test)
         (srfi 64))
 

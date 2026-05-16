@@ -1,0 +1,6 @@
+[Unit]
+Description=Daily restart of dabsite (clears any slow leaks, picks up new config)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl try-restart dabsite.service

@@ -1,4 +1,4 @@
-;; damian_www configuration.
+;; dabsite configuration.
 ;; Copy this file to config.scm and edit values. config.scm is gitignored.
 ;; The webapp reads it via (load) at startup, so it is plain scheme:
 ;; just define the bindings below.
@@ -19,9 +19,9 @@
 ;; --- Database ---
 (define db-host     "127.0.0.1")
 (define db-port     5432)
-(define db-user     "damian_www")
+(define db-user     "dabsite")
 (define db-password "change-me")
-(define db-name     "damian_www")
+(define db-name     "dabsite")
 
 ;; --- Auth ---
 ;; Generate with: scm bin/hash-passphrase.scm 'your passphrase here'

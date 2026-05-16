@@ -1,4 +1,4 @@
-(define-library (damian polls)
+(define-library (dabsite polls)
   (import (scheme base)
           (scheme write)
           (scheme char)
@@ -10,10 +10,10 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian db)
-          (damian util)
-          (damian auth)
-          (damian views))
+          (dabsite db)
+          (dabsite util)
+          (dabsite auth)
+          (dabsite views))
   (export install-poll-routes!
           ;; exposed for tests
           tally

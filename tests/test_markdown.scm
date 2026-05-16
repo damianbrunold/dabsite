@@ -1,10 +1,10 @@
-;; Unit tests for (damian markdown).
+;; Unit tests for (dabsite markdown).
 
 (import (scheme base) (scheme write) (scheme process-context)
         (srfi 13) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian markdown) (scm test) (srfi 64))
+(import (dabsite markdown) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "markdown")

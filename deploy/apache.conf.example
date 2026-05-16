@@ -1,9 +1,9 @@
-# Apache 2.4 reverse-proxy for damian_www.
+# Apache 2.4 reverse-proxy for dabsite.
 #
 # Requires: mod_proxy, mod_proxy_http, mod_headers, mod_ssl.
 # Enable with:
 #   sudo a2enmod proxy proxy_http headers ssl
-#   sudo a2ensite damian_www
+#   sudo a2ensite dabsite
 #   sudo systemctl reload apache2
 #
 # The webapp listens on 127.0.0.1:8088 (loopback only) — see config.scm.

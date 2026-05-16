@@ -1,4 +1,4 @@
-(define-library (damian grocery)
+(define-library (dabsite grocery)
   (import (scheme base)
           (scheme write)
           (srfi 1)
@@ -7,10 +7,10 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian db)
-          (damian util)
-          (damian auth)
-          (damian views))
+          (dabsite db)
+          (dabsite util)
+          (dabsite auth)
+          (dabsite views))
   (export install-grocery-routes!)
   (begin
 

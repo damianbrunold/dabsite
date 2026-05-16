@@ -1,5 +1,5 @@
 [Unit]
-Description=Run damian_www health probe every minute
+Description=Run dabsite health probe every minute
 
 [Timer]
 # Wait a minute after boot before the first probe so the app has time
@@ -7,7 +7,7 @@ Description=Run damian_www health probe every minute
 OnBootSec=60s
 OnUnitActiveSec=60s
 AccuracySec=15s
-Unit=damian-www-health.service
+Unit=dabsite-health.service
 
 [Install]
 WantedBy=timers.target

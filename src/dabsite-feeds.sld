@@ -1,4 +1,4 @@
-(define-library (damian feeds)
+(define-library (dabsite feeds)
   (import (scheme base)
           (scheme char)
           (scheme write)
@@ -11,13 +11,13 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian db)
-          (damian util)
-          (damian auth)
-          (damian views)
-          (damian feeds-parser)
-          (damian feeds-fetcher)
-          (damian log))
+          (dabsite db)
+          (dabsite util)
+          (dabsite auth)
+          (dabsite views)
+          (dabsite feeds-parser)
+          (dabsite feeds-fetcher)
+          (dabsite log))
   (export install-feed-routes!
           start-feed-scheduler!
           ;; exposed for unit tests
@@ -25,7 +25,7 @@
   (begin
 
     ;; ==============================================================
-    ;; DB ops. All SQL flows through (damian db) helpers.
+    ;; DB ops. All SQL flows through (dabsite db) helpers.
     ;; ==============================================================
 
     (define (rows cfg sql)

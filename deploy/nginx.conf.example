@@ -1,12 +1,12 @@
-# nginx reverse-proxy for damian_www.
+# nginx reverse-proxy for dabsite.
 #
-# Place this file at /etc/nginx/sites-available/damian_www and symlink
+# Place this file at /etc/nginx/sites-available/dabsite and symlink
 # it from /etc/nginx/sites-enabled/. Then:
 #   sudo nginx -t && sudo systemctl reload nginx
 #
 # The webapp listens on 127.0.0.1:8088 (loopback only) — see config.scm.
 
-upstream damian_www_backend {
+upstream dabsite_backend {
     server 127.0.0.1:8088;
     keepalive 16;
 }
@@ -42,7 +42,7 @@ server {
     client_max_body_size 4m;
 
     location / {
-        proxy_pass         http://damian_www_backend;
+        proxy_pass         http://dabsite_backend;
         proxy_http_version 1.1;
 
         proxy_set_header Host              $host;
@@ -59,7 +59,7 @@ server {
     # can be redirected to different targets over time. The app already
     # sends Cache-Control: no-store; this is just defence in depth.
     location ^~ /s/ {
-        proxy_pass         http://damian_www_backend;
+        proxy_pass         http://dabsite_backend;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;

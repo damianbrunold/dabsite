@@ -1,9 +1,9 @@
-(define-library (damian markdown)
+(define-library (dabsite markdown)
   (import (scheme base)
           (scheme write)
           (scheme char)
           (srfi 13)
-          (damian util))
+          (dabsite util))
   (export render-markdown)
   (begin
 

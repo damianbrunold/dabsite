@@ -1,8 +1,8 @@
 [Unit]
-Description=damian_www health probe (restarts damian-www if /healthz fails)
-After=damian-www.service
+Description=dabsite health probe (restarts dabsite if /healthz fails)
+After=dabsite.service
 # Don't bother probing if the service isn't even meant to be running.
-ConditionPathExists=/run/systemd/units/invocation:damian-www.service
+ConditionPathExists=/run/systemd/units/invocation:dabsite.service
 
 [Service]
 Type=oneshot
@@ -13,7 +13,7 @@ ExecStart=/bin/sh -c '\
   if ! curl -fsS --max-time 5 http://127.0.0.1:8088/healthz >/dev/null; then \
     sleep 5; \
     if ! curl -fsS --max-time 5 http://127.0.0.1:8088/healthz >/dev/null; then \
-      echo "damian-www healthz failed twice; restarting"; \
-      /bin/systemctl restart damian-www.service; \
+      echo "dabsite healthz failed twice; restarting"; \
+      /bin/systemctl restart dabsite.service; \
     fi; \
   fi'

@@ -1,12 +1,12 @@
 [Unit]
-Description=Daily restart of damian_www at 04:00
+Description=Daily restart of dabsite at 04:00
 
 [Timer]
 OnCalendar=*-*-* 04:00:00
 # If the machine was off at 04:00, restart on next boot.
 Persistent=true
 RandomizedDelaySec=2m
-Unit=damian-www-restart.service
+Unit=dabsite-restart.service
 
 [Install]
 WantedBy=timers.target

@@ -1,10 +1,10 @@
-;; Unit tests for (damian auth). No DB, no network.
+;; Unit tests for (dabsite auth). No DB, no network.
 
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian auth)
-        (damian util)
+(import (dabsite auth)
+        (dabsite util)
         (scm crypto)
         (scm net http request)
         (scm test)

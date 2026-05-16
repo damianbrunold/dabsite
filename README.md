@@ -1,4 +1,4 @@
-# damian_www
+# dabsite
 
 The source code that runs my personal website. Released under MIT in case
 anything in here is useful to someone else, but **this is not a general
@@ -32,15 +32,15 @@ Everything except a few public surfaces (`/`, `/p/<slug>`, `/login`,
 
 ```
 bin/         entry points (server.scm, gen-passphrase.scm, ...)
-src/         scheme libraries (damian-app.sld, damian-db.sld, ...)
+src/         scheme libraries (dabsite-app.sld, dabsite-db.sld, ...)
 migrations/  numbered SQL files; the server applies pending ones at startup
 static/      assets served at /static/  (CSS, JS, icon, robots.txt)
 tests/       srfi-64 tests; pure-scheme, no DB needed
 deploy/      apache + nginx vhost samples, systemd units
 ```
 
-Library naming follows the scm convention: library `(damian app)` is
-the file `src/damian-app.sld` — segments joined with `-`.
+Library naming follows the scm convention: library `(dabsite app)` is
+the file `src/dabsite-app.sld` — segments joined with `-`.
 
 
 ## Local bootstrap
@@ -51,8 +51,8 @@ the file `src/damian-app.sld` — segments joined with `-`.
 
    ```
    sudo apt install postgresql
-   sudo -u postgres createuser -P damian_www      # set a password
-   sudo -u postgres createdb -O damian_www damian_www
+   sudo -u postgres createuser -P dabsite      # set a password
+   sudo -u postgres createdb -O dabsite dabsite
    ```
 
 2. **Create `config.scm`.** Copy the template and fill it in:
@@ -115,36 +115,36 @@ Samples in `deploy/`:
   reverse-proxy vhosts that forward everything to
   `http://127.0.0.1:8088/`. TLS is the proxy's job; the app itself
   binds loopback.
-* `deploy/systemd/damian-www.service` — main unit. Runs as a
+* `deploy/systemd/dabsite.service` — main unit. Runs as a
   non-privileged user, restarts on failure, gives the scheme HTTP
   server its 10 s graceful drain before SIGKILL.
-* `deploy/systemd/damian-www-health.{service,timer}` — minute-by-minute
+* `deploy/systemd/dabsite-health.{service,timer}` — minute-by-minute
   probe against `/healthz`. Two consecutive failures triggers a
   restart, so a single slow request can't bounce the daemon.
-* `deploy/systemd/damian-www-restart.{service,timer}` — daily restart
+* `deploy/systemd/dabsite-restart.{service,timer}` — daily restart
   at 04:00 (randomized ±2m). Cheap insurance against slow leaks.
 
 ### Installing the units
 
 ```
-sudo cp deploy/systemd/damian-www*.{service,timer} /etc/systemd/system/
+sudo cp deploy/systemd/dabsite*.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now damian-www.service
-sudo systemctl enable --now damian-www-health.timer
-sudo systemctl enable --now damian-www-restart.timer
+sudo systemctl enable --now dabsite.service
+sudo systemctl enable --now dabsite-health.timer
+sudo systemctl enable --now dabsite-restart.timer
 ```
 
 ### Day-to-day
 
 | command                                            | what it does                |
 | -------------------------------------------------- | --------------------------- |
-| `sudo systemctl status damian-www`                 | health summary              |
-| `sudo systemctl start damian-www`                  | start the daemon            |
-| `sudo systemctl stop damian-www`                   | stop the daemon             |
-| `sudo systemctl restart damian-www`                | restart now                 |
-| `journalctl -u damian-www -f`                      | tail the live logs          |
-| `systemctl list-timers 'damian-www*'`              | see when the timers fire    |
-| `sudo systemctl start damian-www-health.service`   | run a one-off health probe  |
+| `sudo systemctl status dabsite`                 | health summary              |
+| `sudo systemctl start dabsite`                  | start the daemon            |
+| `sudo systemctl stop dabsite`                   | stop the daemon             |
+| `sudo systemctl restart dabsite`                | restart now                 |
+| `journalctl -u dabsite -f`                      | tail the live logs          |
+| `systemctl list-timers 'dabsite*'`              | see when the timers fire    |
+| `sudo systemctl start dabsite-health.service`   | run a one-off health probe  |
 
 `Restart=always` on the main unit plus the health timer means the
 daemon recovers on its own from crashes or hangs. The daily restart is
@@ -164,10 +164,10 @@ journald. Format:
 Useful queries:
 
 ```
-journalctl -u damian-www -f                        # live tail
-journalctl -u damian-www --since '1 hour ago'      # recent history
-journalctl -u damian-www -p err                    # only errors
-journalctl -u damian-www -g 'GET /tracker'         # grep
+journalctl -u dabsite -f                        # live tail
+journalctl -u dabsite --since '1 hour ago'      # recent history
+journalctl -u dabsite -p err                    # only errors
+journalctl -u dabsite -g 'GET /tracker'         # grep
 ```
 
 Rotation is handled by journald itself — no `logrotate` config needed.

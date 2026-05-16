@@ -1,9 +1,9 @@
-;; Unit tests for (damian polls) — pure-scheme helpers only.
+;; Unit tests for (dabsite polls) — pure-scheme helpers only.
 
 (import (scheme base) (scheme write) (scheme cxr) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian polls) (scm test) (srfi 64))
+(import (dabsite polls) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "polls")

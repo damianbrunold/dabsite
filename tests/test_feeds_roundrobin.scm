@@ -3,7 +3,7 @@
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian feeds) (scm test) (srfi 64))
+(import (dabsite feeds) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "feeds-roundrobin")

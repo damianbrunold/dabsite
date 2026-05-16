@@ -1,4 +1,4 @@
-(define-library (damian auth)
+(define-library (dabsite auth)
   (import (scheme base)
           (scheme write)
           (scheme time)
@@ -10,7 +10,7 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian util))
+          (dabsite util))
   (export make-auth
           auth?
           authed?

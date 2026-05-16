@@ -1,9 +1,9 @@
-;; Unit tests for (damian tracker) — pure-scheme helpers only.
+;; Unit tests for (dabsite tracker) — pure-scheme helpers only.
 
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian tracker) (scm test) (srfi 64))
+(import (dabsite tracker) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "tracker")

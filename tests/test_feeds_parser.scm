@@ -1,9 +1,9 @@
-;; Unit tests for (damian feeds-parser). Uses XML fixtures next to this file.
+;; Unit tests for (dabsite feeds-parser). Uses XML fixtures next to this file.
 
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian feeds-parser) (scm test) (srfi 64))
+(import (dabsite feeds-parser) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "feeds-parser")

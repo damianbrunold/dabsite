@@ -1,4 +1,4 @@
-(define-library (damian files)
+(define-library (dabsite files)
   (import (scheme base)
           (scheme write)
           (scheme file)
@@ -12,12 +12,12 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian db)
-          (damian util)
-          (damian auth)
-          (damian multipart)
-          (damian views)
-          (damian log))
+          (dabsite db)
+          (dabsite util)
+          (dabsite auth)
+          (dabsite multipart)
+          (dabsite views)
+          (dabsite log))
   (export install-files-routes!
           ;; exposed for tests
           mime-from-name

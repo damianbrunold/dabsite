@@ -1,4 +1,4 @@
-(define-library (damian landing)
+(define-library (dabsite landing)
   (import (scheme base)
           (scheme write)
           (srfi 13)
@@ -6,11 +6,11 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian db)
-          (damian util)
-          (damian auth)
-          (damian views)
-          (damian markdown))
+          (dabsite db)
+          (dabsite util)
+          (dabsite auth)
+          (dabsite views)
+          (dabsite markdown))
   (export install-landing-routes!)
   (begin
 

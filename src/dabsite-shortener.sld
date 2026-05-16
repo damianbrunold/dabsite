@@ -1,4 +1,4 @@
-(define-library (damian shortener)
+(define-library (dabsite shortener)
   (import (scheme base)
           (scheme write)
           (scheme char)
@@ -8,10 +8,10 @@
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (damian db)
-          (damian util)
-          (damian auth)
-          (damian views))
+          (dabsite db)
+          (dabsite util)
+          (dabsite auth)
+          (dabsite views))
   (export install-shortener-routes!
           ;; exposed for tests
           random-code

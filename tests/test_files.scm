@@ -1,9 +1,9 @@
-;; Unit tests for (damian files) — pure helpers only.
+;; Unit tests for (dabsite files) — pure helpers only.
 
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian files) (scm test) (srfi 64))
+(import (dabsite files) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "files")

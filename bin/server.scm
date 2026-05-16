@@ -26,9 +26,9 @@
 (module-search-path! (cons (string-append root "/src")
                            (module-search-path)))
 
-(import (damian db)
-        (damian auth)
-        (damian app))
+(import (dabsite db)
+        (dabsite auth)
+        (dabsite app))
 
 (define (config-path)
   (let ((args (cdr (command-line))))

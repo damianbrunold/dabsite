@@ -1,9 +1,9 @@
-;; Unit tests for (damian shortener) — pure-scheme helpers only.
+;; Unit tests for (dabsite shortener) — pure-scheme helpers only.
 
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian shortener) (scm test) (srfi 64))
+(import (dabsite shortener) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "shortener")

@@ -1,9 +1,9 @@
-;; Unit tests for (damian multipart).
+;; Unit tests for (dabsite multipart).
 
 (import (scheme base) (scheme write) (scheme process-context) (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (damian multipart) (scm test) (srfi 64))
+(import (dabsite multipart) (scm test) (srfi 64))
 
 (test-runner-factory scm-test-runner)
 (test-begin "multipart")

@@ -1,4 +1,4 @@
-(define-library (damian log)
+(define-library (dabsite log)
   (import (scheme base)
           (scheme write)
           (srfi 19))

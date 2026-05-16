@@ -1,6 +1,0 @@
-[Unit]
-Description=Daily restart of damian_www (clears any slow leaks, picks up new config)
-
-[Service]
-Type=oneshot
-ExecStart=/bin/systemctl try-restart damian-www.service
