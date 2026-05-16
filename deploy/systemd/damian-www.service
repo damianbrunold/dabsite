@@ -1,0 +1,40 @@
+[Unit]
+Description=damian_www scheme webapp
+After=network-online.target postgresql.service
+Wants=network-online.target
+# If the health-check decides to restart us, that's fine — but if we
+# restart-loop more than 5 times in 60s, give up so we don't burn CPU.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=dab
+Group=dab
+WorkingDirectory=/home/dab/www/damian_www
+ExecStart=/home/dab/bin/scm bin/server.scm config.scm
+
+# Restart whenever the process exits, not only on failure. Combined with
+# the daily restart timer this means the service is self-healing across
+# OOMs, transient DB outages, and unexpected exceptions.
+Restart=always
+RestartSec=3s
+
+# Give the scheme HTTP server (graceful-stop-ms = 10s by default) time
+# to drain in-flight requests before SIGKILL.
+TimeoutStopSec=15s
+
+# Logs go to journald — read with: journalctl -u damian-www -f
+StandardOutput=journal
+StandardError=journal
+
+# --- hardening ---
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+# The app needs to write to log/ and data/ (uploaded files).
+ReadWritePaths=/home/dab/www/damian_www/log /home/dab/www/damian_www/data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,52 @@
+# Apache 2.4 reverse-proxy for damian_www.
+#
+# Requires: mod_proxy, mod_proxy_http, mod_headers, mod_ssl.
+# Enable with:
+#   sudo a2enmod proxy proxy_http headers ssl
+#   sudo a2ensite damian_www
+#   sudo systemctl reload apache2
+#
+# The webapp listens on 127.0.0.1:8088 (loopback only) — see config.scm.
+
+<VirtualHost *:443>
+    ServerAdmin webmaster@dabsoft.ch
+    ServerName  www.damianbrunold.ch
+
+    SSLEngine on
+    SSLCertificateFile    "/etc/letsencrypt/live/www.damianbrunold.ch/fullchain.pem"
+    SSLCertificateKeyFile "/etc/letsencrypt/live/www.damianbrunold.ch/privkey.pem"
+
+    ErrorLog  /var/log/apache2/error_damian.log
+    CustomLog /var/log/apache2/access_damian.log combined
+    LogLevel  warn
+
+    # Forward original client info to the app.
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Host  "%{HTTP_HOST}e"
+
+    ProxyPreserveHost   On
+    ProxyRequests       Off
+    ProxyTimeout        30
+
+    # Send everything to the scheme app. The app serves its own /static/
+    # path, so we don't bypass with an Alias.
+    ProxyPass        / http://127.0.0.1:8088/
+    ProxyPassReverse / http://127.0.0.1:8088/
+
+    # URL shortener redirects must not be cached anywhere: short codes
+    # change targets over time, and a cached 302 would pin an old target
+    # in shared caches. The app already sends Cache-Control: no-store on
+    # /s/* responses; this is just a belt for the proxy's braces.
+    <Location "/s/">
+        Header always set Cache-Control "no-store"
+    </Location>
+</VirtualHost>
+
+# Redirect bare hostname to www.
+<VirtualHost *:443>
+    ServerName damianbrunold.ch
+    SSLEngine on
+    SSLCertificateFile    "/etc/letsencrypt/live/damianbrunold.ch/fullchain.pem"
+    SSLCertificateKeyFile "/etc/letsencrypt/live/damianbrunold.ch/privkey.pem"
+    RedirectPermanent / https://www.damianbrunold.ch/
+</VirtualHost>

@@ -1,0 +1,9 @@
+User-agent: *
+# Crawlers should skip the auth flow and the short-link / voting / health
+# capability URLs. The public landing pages and uploaded files are fine
+# to index.
+Disallow: /login
+Disallow: /logout
+Disallow: /healthz
+Disallow: /s/
+Disallow: /poll/

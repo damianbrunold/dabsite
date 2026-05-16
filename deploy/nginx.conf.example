@@ -1,0 +1,70 @@
+# nginx reverse-proxy for damian_www.
+#
+# Place this file at /etc/nginx/sites-available/damian_www and symlink
+# it from /etc/nginx/sites-enabled/. Then:
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# The webapp listens on 127.0.0.1:8088 (loopback only) — see config.scm.
+
+upstream damian_www_backend {
+    server 127.0.0.1:8088;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name www.damianbrunold.ch damianbrunold.ch;
+    return 301 https://www.damianbrunold.ch$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name damianbrunold.ch;
+    ssl_certificate     /etc/letsencrypt/live/damianbrunold.ch/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/damianbrunold.ch/privkey.pem;
+    return 301 https://www.damianbrunold.ch$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name www.damianbrunold.ch;
+
+    ssl_certificate     /etc/letsencrypt/live/www.damianbrunold.ch/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/www.damianbrunold.ch/privkey.pem;
+
+    access_log /var/log/nginx/damian_access.log;
+    error_log  /var/log/nginx/damian_error.log warn;
+
+    # Reasonable upload ceiling; raise if needed.
+    client_max_body_size 4m;
+
+    location / {
+        proxy_pass         http://damian_www_backend;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # URL shortener redirects must not be cached anywhere — short codes
+    # can be redirected to different targets over time. The app already
+    # sends Cache-Control: no-store; this is just defence in depth.
+    location ^~ /s/ {
+        proxy_pass         http://damian_www_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        add_header       Cache-Control "no-store" always;
+    }
+}

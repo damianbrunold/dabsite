@@ -1,0 +1,7 @@
+# webapp local state
+/config.scm
+/log/
+/data/
+*.log
+*.pid
+.env
