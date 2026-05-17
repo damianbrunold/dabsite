@@ -99,10 +99,8 @@
                     (lambda (c)
                       (pg-result-rows
                         (pg-query c
-                          (string-append
-                            "SELECT 1 FROM notes WHERE name = "
-                            (pg-quote-literal name)
-                            " LIMIT 1")))))))
+                          "SELECT 1 FROM notes WHERE name = $1 LIMIT 1"
+                          name))))))
         (pair? rows)))
 
     (define (note-by-name cfg name)
@@ -114,9 +112,8 @@
                             "SELECT id, name, body, "
                             "to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created, "
                             "to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
-                            "FROM notes WHERE name = "
-                            (pg-quote-literal name)
-                            " LIMIT 1")))))))
+                            "FROM notes WHERE name = $1 LIMIT 1")
+                          name))))))
         (if (pair? rows) (car rows) #f)))
 
     (define (list-notes cfg q)
@@ -124,43 +121,41 @@
                                   "  substring(body, 1, 160) AS preview, "
                                   "  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
                                   "FROM notes "))
+             (has-q (and q (> (string-length (string-trim-both q)) 0)))
              (where (cond
-                      ((and q (> (string-length (string-trim-both q)) 0))
+                      (has-q
                        (string-append
                          "WHERE to_tsvector('simple', name || ' ' || body) "
-                         "@@ plainto_tsquery('simple', "
-                         (pg-quote-literal q) ") "))
+                         "@@ plainto_tsquery('simple', $1) "))
                       (else "")))
              (order "ORDER BY updated_at DESC LIMIT 200")
              (sql (string-append base where order)))
         (with-db cfg
           (lambda (c)
-            (pg-result->alist-list (pg-query c sql))))))
+            (pg-result->alist-list
+              (cond (has-q (pg-query c sql q))
+                    (else  (pg-query c sql))))))))
 
     (define (create-note! cfg name body)
       (with-db cfg
         (lambda (c)
           (pg-exec c
-            (string-append
-              "INSERT INTO notes (name, body) VALUES ("
-              (pg-quote-literal name) ", "
-              (pg-quote-literal body) ")")))))
+            "INSERT INTO notes (name, body) VALUES ($1, $2)"
+            name body))))
 
     (define (update-note! cfg name body)
       (with-db cfg
         (lambda (c)
           (pg-exec c
-            (string-append
-              "UPDATE notes SET body = " (pg-quote-literal body)
-              " WHERE name = " (pg-quote-literal name))))))
+            "UPDATE notes SET body = $1 WHERE name = $2"
+            body name))))
 
     (define (delete-note! cfg name)
       (with-db cfg
         (lambda (c)
           (pg-exec c
-            (string-append
-              "DELETE FROM notes WHERE name = "
-              (pg-quote-literal name))))))
+            "DELETE FROM notes WHERE name = $1"
+            name))))
 
     (define (allocate-name cfg)
       ;; Generate random names until one is free. With 64^3 names, this

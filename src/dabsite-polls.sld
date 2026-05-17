@@ -116,14 +116,28 @@
     ;; DB ops
     ;; ============================================================
 
-    (define (alist-rows cfg sql)
-      (with-db cfg (lambda (c) (pg-result->alist-list (pg-query c sql)))))
+    (define (alist-rows cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (pg-result->alist-list
+              (cond ((null? params) (pg-query c sql))
+                    (else (pg-query c (pg-format-sql sql params)))))))))
 
-    (define (rows cfg sql)
-      (with-db cfg (lambda (c) (pg-result-rows (pg-query c sql)))))
+    (define (rows cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (pg-result-rows
+              (cond ((null? params) (pg-query c sql))
+                    (else (pg-query c (pg-format-sql sql params)))))))))
 
-    (define (exec cfg sql)
-      (with-db cfg (lambda (c) (pg-exec c sql))))
+    (define (exec cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (cond ((null? params) (pg-exec c sql))
+                  (else (pg-exec c (pg-format-sql sql params))))))))
 
     (define (poll-by-slug cfg slug)
       ;; "closed" in the result alist is the *effective* closed flag (true
@@ -141,25 +155,26 @@
                    "       COALESCE(to_char(closes_at, 'YYYY-MM-DD HH24:MI'), '') "
                    "         AS closes_at_str, "
                    "       to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created "
-                   "FROM polls WHERE slug = "
-                   (pg-quote-literal slug)
-                   " LIMIT 1"))))
+                   "FROM polls WHERE slug = $1 LIMIT 1")
+                 (list slug))))
         (cond ((pair? r) (car r)) (else #f))))
 
     (define (poll-options cfg poll-id)
       (alist-rows cfg
         (string-append
           "SELECT id::text AS id, label "
-          "FROM poll_options WHERE poll_id = " (pg-quote-int poll-id)
-          " ORDER BY sort_order, id")))
+          "FROM poll_options WHERE poll_id = $1 "
+          "ORDER BY sort_order, id")
+        (list poll-id)))
 
     (define (poll-responses cfg poll-id)
       (alist-rows cfg
         (string-append
           "SELECT id::text AS id, name, owner_cookie, "
           "       to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
-          "FROM poll_responses WHERE poll_id = " (pg-quote-int poll-id)
-          " ORDER BY created_at")))
+          "FROM poll_responses WHERE poll_id = $1 "
+          "ORDER BY created_at")
+        (list poll-id)))
 
     (define (poll-choices cfg poll-id)
       ;; All (response_id . option_id . value) for a poll.
@@ -170,12 +185,12 @@
           "       pc.value             AS value "
           "FROM poll_choices pc "
           "JOIN poll_responses pr ON pr.id = pc.response_id "
-          "WHERE pr.poll_id = " (pg-quote-int poll-id))))
+          "WHERE pr.poll_id = $1")
+        (list poll-id)))
 
     (define (slug-exists? cfg slug)
-      (pair? (rows cfg (string-append
-                         "SELECT 1 FROM polls WHERE slug = "
-                         (pg-quote-literal slug) " LIMIT 1"))))
+      (pair? (rows cfg "SELECT 1 FROM polls WHERE slug = $1 LIMIT 1"
+                   (list slug))))
 
     (define (allocate-slug cfg)
       (let loop ((tries 0))
@@ -195,21 +210,23 @@
           (pg-exec c "BEGIN")
           (guard (exn (#t (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
                           (raise exn)))
-            (let* ((closes-sql
+            (let* ((closes-val
                      (cond
-                       ((or (not closes-at) (string=? closes-at "")) "NULL")
-                       (else (string-append
-                               (pg-quote-literal closes-at)
-                               "::timestamptz"))))
-                   (res (pg-query c
-                          (string-append
-                            "INSERT INTO polls "
-                            "(slug, title, description, closes_at) VALUES ("
-                            (pg-quote-literal slug) ", "
-                            (pg-quote-literal title) ", "
-                            (pg-quote-literal description) ", "
-                            closes-sql
-                            ") RETURNING id")))
+                       ((or (not closes-at) (string=? closes-at "")) #f)
+                       (else closes-at)))
+                   (res (cond
+                          (closes-val
+                           (pg-query c
+                             (string-append
+                               "INSERT INTO polls (slug, title, description, closes_at) "
+                               "VALUES ($1, $2, $3, $4::timestamptz) RETURNING id")
+                             slug title description closes-val))
+                          (else
+                           (pg-query c
+                             (string-append
+                               "INSERT INTO polls (slug, title, description, closes_at) "
+                               "VALUES ($1, $2, $3, NULL) RETURNING id")
+                             slug title description))))
                    (rows (pg-result-rows res))
                    (id   (cond ((pair? rows) (vector-ref (car rows) 0))
                                (else (error "create-poll!: no id returned"))))
@@ -219,92 +236,69 @@
                   ((null? ls) #t)
                   (else
                    (pg-exec c
-                     (string-append
-                       "INSERT INTO poll_options (poll_id, sort_order, label) VALUES ("
-                       (pg-quote-int poll-id) ", "
-                       (pg-quote-int i) ", "
-                       (pg-quote-literal (car ls)) ")"))
+                     "INSERT INTO poll_options (poll_id, sort_order, label) VALUES ($1, $2, $3)"
+                     poll-id i (car ls))
                    (loop (+ i 1) (cdr ls)))))
               (pg-exec c "COMMIT")
               poll-id)))))
 
     (define (delete-poll! cfg slug)
-      (exec cfg (string-append "DELETE FROM polls WHERE slug = "
-                               (pg-quote-literal slug))))
+      (exec cfg "DELETE FROM polls WHERE slug = $1" (list slug)))
 
     (define (close-poll! cfg slug)
-      (exec cfg (string-append "UPDATE polls SET closed = true WHERE slug = "
-                               (pg-quote-literal slug))))
+      (exec cfg "UPDATE polls SET closed = true WHERE slug = $1" (list slug)))
 
     (define (reopen-poll! cfg slug)
       ;; Manual reopen also clears closes_at — otherwise a poll closed by
       ;; auto-expiry would immediately auto-close again.
-      (exec cfg (string-append "UPDATE polls SET closed = false, "
-                               "closes_at = NULL WHERE slug = "
-                               (pg-quote-literal slug))))
+      (exec cfg
+            "UPDATE polls SET closed = false, closes_at = NULL WHERE slug = $1"
+            (list slug)))
 
     (define (find-response cfg poll-id owner-cookie)
       ;; Returns the response alist or #f.
       (let ((rs (alist-rows cfg
                   (string-append
                     "SELECT id::text AS id, name "
-                    "FROM poll_responses WHERE poll_id = "
-                    (pg-quote-int poll-id)
-                    " AND owner_cookie = "
-                    (pg-quote-literal owner-cookie)
-                    " LIMIT 1"))))
+                    "FROM poll_responses "
+                    "WHERE poll_id = $1 AND owner_cookie = $2 LIMIT 1")
+                  (list poll-id owner-cookie))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
     (define (find-existing-response-id c poll-id owner-cookie)
       (let ((rows (pg-result-rows
                     (pg-query c
                       (string-append
-                        "SELECT id FROM poll_responses WHERE poll_id = "
-                        (pg-quote-int poll-id)
-                        " AND owner_cookie = "
-                        (pg-quote-literal owner-cookie)
-                        " LIMIT 1")))))
+                        "SELECT id FROM poll_responses "
+                        "WHERE poll_id = $1 AND owner_cookie = $2 LIMIT 1")
+                      poll-id owner-cookie))))
         (cond
           ((pair? rows) (string->number (vector-ref (car rows) 0)))
           (else #f))))
 
     (define (update-response-name! c rid name)
-      (pg-exec c
-        (string-append
-          "UPDATE poll_responses SET name = " (pg-quote-literal name)
-          " WHERE id = " (pg-quote-int rid)))
-      (pg-exec c
-        (string-append
-          "DELETE FROM poll_choices WHERE response_id = "
-          (pg-quote-int rid))))
+      (pg-exec c "UPDATE poll_responses SET name = $1 WHERE id = $2" name rid)
+      (pg-exec c "DELETE FROM poll_choices WHERE response_id = $1" rid))
 
     (define (insert-response! c poll-id name owner-cookie)
       (let ((rows (pg-result-rows
                     (pg-query c
                       (string-append
                         "INSERT INTO poll_responses (poll_id, name, owner_cookie) "
-                        "VALUES ("
-                        (pg-quote-int poll-id) ", "
-                        (pg-quote-literal name) ", "
-                        (pg-quote-literal owner-cookie)
-                        ") RETURNING id")))))
+                        "VALUES ($1, $2, $3) RETURNING id")
+                      poll-id name owner-cookie))))
         (cond
           ((pair? rows) (string->number (vector-ref (car rows) 0)))
           (else (error "insert-response!: no id returned")))))
 
     (define (insert-choices! c resp-id choices)
       (when (pair? choices)
-        (let ((rows-sql
-                (map (lambda (p)
-                       (string-append
-                         "(" (pg-quote-int resp-id) ", "
-                         (pg-quote-int (string->number (car p))) ", "
-                         (pg-quote-literal (cdr p)) ")"))
-                     choices)))
-          (pg-exec c
-            (string-append
-              "INSERT INTO poll_choices (response_id, option_id, value) VALUES "
-              (string-join rows-sql ", "))))))
+        (for-each
+          (lambda (p)
+            (pg-exec c
+              "INSERT INTO poll_choices (response_id, option_id, value) VALUES ($1, $2, $3)"
+              resp-id (string->number (car p)) (cdr p)))
+          choices)))
 
     (define (upsert-response! cfg poll-id owner-cookie name choices)
       ;; choices: list of (option-id-string . value-string). Returns the

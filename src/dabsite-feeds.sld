@@ -32,14 +32,28 @@
     ;; DB ops. All SQL flows through (dabsite db) helpers.
     ;; ==============================================================
 
-    (define (rows cfg sql)
-      (with-db cfg (lambda (c) (pg-result-rows (pg-query c sql)))))
+    (define (rows cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (pg-result-rows
+              (cond ((null? params) (pg-query c sql))
+                    (else (pg-query c (pg-format-sql sql params)))))))))
 
-    (define (alist-rows cfg sql)
-      (with-db cfg (lambda (c) (pg-result->alist-list (pg-query c sql)))))
+    (define (alist-rows cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (pg-result->alist-list
+              (cond ((null? params) (pg-query c sql))
+                    (else (pg-query c (pg-format-sql sql params)))))))))
 
-    (define (exec cfg sql)
-      (with-db cfg (lambda (c) (pg-exec c sql))))
+    (define (exec cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (cond ((null? params) (pg-exec c sql))
+                  (else (pg-exec c (pg-format-sql sql params))))))))
 
     ;; --- entries listing ---
 
@@ -137,45 +151,46 @@
     ;; --- mark read/unread ---
 
     (define (mark-entry-read! cfg id)
-      (exec cfg (string-append
-                  "UPDATE feed_entries SET read_at = now() WHERE id = "
-                  (pg-quote-int id))))
+      (exec cfg "UPDATE feed_entries SET read_at = now() WHERE id = $1"
+            (list id)))
 
     (define (mark-entry-unread! cfg id)
-      (exec cfg (string-append
-                  "UPDATE feed_entries SET read_at = NULL WHERE id = "
-                  (pg-quote-int id))))
+      (exec cfg "UPDATE feed_entries SET read_at = NULL WHERE id = $1"
+            (list id)))
 
     (define (mark-all-read! cfg category)
-      (let ((sql (cond
-                   ((and category (not (string=? category "")))
-                    (string-append
-                      "UPDATE feed_entries SET read_at = now() "
-                      "WHERE read_at IS NULL AND feed_id IN "
-                      "(SELECT id FROM feeds WHERE category = "
-                      (pg-quote-literal category) ")"))
-                   (else
-                    "UPDATE feed_entries SET read_at = now() WHERE read_at IS NULL"))))
-        (exec cfg sql)))
+      (cond
+        ((and category (not (string=? category "")))
+         (exec cfg
+               (string-append
+                 "UPDATE feed_entries SET read_at = now() "
+                 "WHERE read_at IS NULL AND feed_id IN "
+                 "(SELECT id FROM feeds WHERE category = $1)")
+               (list category)))
+        (else
+         (exec cfg
+               "UPDATE feed_entries SET read_at = now() WHERE read_at IS NULL"))))
 
     (define (mark-older-than! cfg category days)
       ;; Marks unread entries older than `days` days as read. The cutoff
       ;; is based on fetched_at — the same field that drives display
       ;; ordering — so what looks "old" in the list is what gets dismissed.
-      (let* ((cutoff (string-append
-                       "now() - interval '" (pg-quote-int days) " days'"))
-             (cat-clause (cond
-                           ((and category (not (string=? category "")))
-                            (string-append
-                              "AND feed_id IN (SELECT id FROM feeds WHERE category = "
-                              (pg-quote-literal category) ") "))
-                           (else "")))
-             (sql (string-append
-                    "UPDATE feed_entries SET read_at = now() "
-                    "WHERE read_at IS NULL "
-                    cat-clause
-                    "AND fetched_at < " cutoff)))
-        (exec cfg sql)))
+      (cond
+        ((and category (not (string=? category "")))
+         (exec cfg
+               (string-append
+                 "UPDATE feed_entries SET read_at = now() "
+                 "WHERE read_at IS NULL "
+                 "AND feed_id IN (SELECT id FROM feeds WHERE category = $1) "
+                 "AND fetched_at < now() - make_interval(days => $2)")
+               (list category days)))
+        (else
+         (exec cfg
+               (string-append
+                 "UPDATE feed_entries SET read_at = now() "
+                 "WHERE read_at IS NULL "
+                 "AND fetched_at < now() - make_interval(days => $1)")
+               (list days)))))
 
     ;; Cap of read entries kept per label. Unread entries are never pruned.
     ;; Feeds without a label are bucketed per-feed so an unlabelled spammy
@@ -199,9 +214,9 @@
       ;; Upserts a category row. Used by the admin UI to reorder.
       (exec cfg
         (string-append
-          "INSERT INTO categories (name, sort_order) VALUES ("
-          (pg-quote-literal name) ", " (pg-quote-int sort-order) ") "
-          "ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order")))
+          "INSERT INTO categories (name, sort_order) VALUES ($1, $2) "
+          "ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order")
+        (list name sort-order)))
 
     ;; --- admin (feeds CRUD) ---
 
@@ -222,45 +237,41 @@
 
     (define (ensure-category! cfg category)
       (exec cfg
-        (string-append
-          "INSERT INTO categories (name, sort_order) VALUES ("
-          (pg-quote-literal category) ", 100) "
-          "ON CONFLICT (name) DO NOTHING")))
+            (string-append
+              "INSERT INTO categories (name, sort_order) VALUES ($1, 100) "
+              "ON CONFLICT (name) DO NOTHING")
+            (list category)))
 
     (define (add-feed! cfg url title label category refresh-seconds)
       (ensure-category! cfg category)
       (exec cfg
         (string-append
-          "INSERT INTO feeds (url, title, label, category, refresh_seconds) VALUES ("
-          (pg-quote-literal url) ", "
-          (pg-quote-literal title) ", "
-          (pg-quote-literal label) ", "
-          (pg-quote-literal category) ", "
-          (pg-quote-int refresh-seconds) ") "
-          "ON CONFLICT (url) DO NOTHING")))
+          "INSERT INTO feeds (url, title, label, category, refresh_seconds) "
+          "VALUES ($1, $2, $3, $4, $5) "
+          "ON CONFLICT (url) DO NOTHING")
+        (list url title label category refresh-seconds)))
 
     (define (delete-feed! cfg id)
-      (exec cfg (string-append "DELETE FROM feeds WHERE id = "
-                               (pg-quote-int id))))
+      (exec cfg "DELETE FROM feeds WHERE id = $1" (list id)))
 
     (define (toggle-feed! cfg id)
-      (exec cfg (string-append "UPDATE feeds SET enabled = NOT enabled "
-                               "WHERE id = " (pg-quote-int id))))
+      (exec cfg "UPDATE feeds SET enabled = NOT enabled WHERE id = $1"
+            (list id)))
 
     (define (force-refresh! cfg id)
-      (exec cfg (string-append "UPDATE feeds SET last_fetched_at = NULL, "
-                               "failure_count = 0 "
-                               "WHERE id = " (pg-quote-int id))))
+      (exec cfg
+            (string-append
+              "UPDATE feeds SET last_fetched_at = NULL, failure_count = 0 "
+              "WHERE id = $1")
+            (list id)))
 
     (define (set-refresh-seconds! cfg id refresh-seconds)
-      (exec cfg (string-append "UPDATE feeds SET refresh_seconds = "
-                               (pg-quote-int refresh-seconds)
-                               " WHERE id = " (pg-quote-int id))))
+      (exec cfg "UPDATE feeds SET refresh_seconds = $1 WHERE id = $2"
+            (list refresh-seconds id)))
 
     (define (set-min-entries! cfg id n)
-      (exec cfg (string-append "UPDATE feeds SET min_entries = "
-                               (pg-quote-int n)
-                               " WHERE id = " (pg-quote-int id))))
+      (exec cfg "UPDATE feeds SET min_entries = $1 WHERE id = $2"
+            (list n id)))
 
     ;; --- skip patterns ---
 
@@ -280,14 +291,12 @@
     (define (add-skip-pattern! cfg pattern kind)
       (exec cfg
         (string-append
-          "INSERT INTO feed_skip_patterns (pattern, kind) VALUES ("
-          (pg-quote-literal pattern) ", "
-          (pg-quote-literal kind) ") "
-          "ON CONFLICT (kind, pattern) DO NOTHING")))
+          "INSERT INTO feed_skip_patterns (pattern, kind) VALUES ($1, $2) "
+          "ON CONFLICT (kind, pattern) DO NOTHING")
+        (list pattern kind)))
 
     (define (delete-skip-pattern! cfg id)
-      (exec cfg (string-append "DELETE FROM feed_skip_patterns WHERE id = "
-                               (pg-quote-int id))))
+      (exec cfg "DELETE FROM feed_skip_patterns WHERE id = $1" (list id)))
 
     (define (title-matches-skip? title patterns)
       ;; patterns is (kind . pattern) list. Returns #t if any matches.
@@ -332,15 +341,19 @@
     (define (mark-feed-result! cfg id error-msg)
       ;; On success: reset failure_count to 0; on failure: increment it
       ;; so the next due-check applies the backoff multiplier above.
-      (exec cfg
-        (string-append
-          "UPDATE feeds SET last_fetched_at = now(), last_error = "
-          (cond (error-msg (pg-quote-literal error-msg))
-                (else "NULL"))
-          ", failure_count = "
-          (cond (error-msg "failure_count + 1")
-                (else "0"))
-          " WHERE id = " (pg-quote-int id))))
+      (cond
+        (error-msg
+         (exec cfg
+               (string-append
+                 "UPDATE feeds SET last_fetched_at = now(), last_error = $1, "
+                 "failure_count = failure_count + 1 WHERE id = $2")
+               (list error-msg id)))
+        (else
+         (exec cfg
+               (string-append
+                 "UPDATE feeds SET last_fetched_at = now(), last_error = NULL, "
+                 "failure_count = 0 WHERE id = $1")
+               (list id)))))
 
     (define (assoc-val alist key)
       (let ((p (assoc key alist))) (if p (cdr p) #f)))

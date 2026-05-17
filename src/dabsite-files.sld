@@ -221,42 +221,48 @@
                   (lambda (c)
                     (pg-result-rows
                       (pg-query c
-                        (string-append
-                          "SELECT COUNT(*)::text FROM files WHERE sha256 = "
-                          (pg-quote-literal sha))))))))
+                        "SELECT COUNT(*)::text FROM files WHERE sha256 = $1"
+                        sha))))))
         (cond ((pair? rs) (string->number (vector-ref (car rs) 0)))
               (else 0))))
 
     ;; ---- DB ----
 
     (define (list-files cfg q vis)
-      (let ((where (list "1=1")))
+      (let ((where (list "1=1"))
+            (params '())
+            (n 0))
         (when (and (string? q) (> (string-length (string-trim-both q)) 0))
-          (set! where
-                (cons (string-append
-                        "(name ILIKE '%' || " (pg-quote-literal q)
-                        " || '%' OR note ILIKE '%' || "
-                        (pg-quote-literal q) " || '%')")
-                      where)))
+          (set! n (+ n 1))
+          (let ((p (string-append "$" (number->string n))))
+            (set! where
+                  (cons (string-append
+                          "(name ILIKE '%' || " p " || '%' "
+                          "OR note ILIKE '%' || " p " || '%')")
+                        where))
+            (set! params (append params (list q)))))
         (when (and vis (member vis '("public" "private") string=?))
+          (set! n (+ n 1))
           (set! where
-                (cons (string-append "visibility = "
-                                     (pg-quote-literal vis))
-                      where)))
+                (cons (string-append "visibility = $" (number->string n))
+                      where))
+          (set! params (append params (list vis))))
         (alist-rows cfg
           (string-append
             "SELECT id::text AS id, name, mime, size::text AS size, "
             "       sha256, visibility, note, "
             "       to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created "
             "FROM files WHERE " (string-join where " AND ") " "
-            "ORDER BY created_at DESC, id DESC"))))
+            "ORDER BY created_at DESC, id DESC")
+          params)))
 
     (define (find-file-by-id cfg id)
       (let ((rs (alist-rows cfg
                   (string-append
                     "SELECT id::text AS id, name, mime, size::text AS size, "
                     "       sha256, visibility, note "
-                    "FROM files WHERE id = " (pg-quote-int id)))))
+                    "FROM files WHERE id = $1")
+                  (list id))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
     (define (find-file-by-public-name cfg name)
@@ -264,9 +270,9 @@
                   (string-append
                     "SELECT id::text AS id, name, mime, size::text AS size, "
                     "       sha256, visibility, note "
-                    "FROM files WHERE visibility = 'public' AND name = "
-                    (pg-quote-literal name)
-                    " LIMIT 1"))))
+                    "FROM files WHERE visibility = 'public' AND name = $1 "
+                    "LIMIT 1")
+                  (list name))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
     (define (insert-file! cfg name mime size sha vis note)
@@ -275,34 +281,37 @@
           (pg-query c
             (string-append
               "INSERT INTO files (name, mime, size, sha256, visibility, note) "
-              "VALUES ("
-              (pg-quote-literal name) ", "
-              (pg-quote-literal mime) ", "
-              (number->string size) ", "
-              (pg-quote-literal sha) ", "
-              (pg-quote-literal vis) ", "
-              (pg-quote-literal note) ")")))))
+              "VALUES ($1, $2, $3, $4, $5, $6)")
+            name mime size sha vis note))))
 
     (define (delete-file-row! cfg id)
-      (exec cfg (string-append "DELETE FROM files WHERE id = "
-                               (pg-quote-int id))))
+      (exec cfg "DELETE FROM files WHERE id = $1" (list id)))
 
     (define (toggle-file-visibility! cfg id)
-      (exec cfg (string-append
-                  "UPDATE files SET visibility = CASE visibility "
-                  "WHEN 'public' THEN 'private' ELSE 'public' END "
-                  "WHERE id = " (pg-quote-int id))))
+      (exec cfg
+            (string-append
+              "UPDATE files SET visibility = CASE visibility "
+              "WHEN 'public' THEN 'private' ELSE 'public' END "
+              "WHERE id = $1")
+            (list id)))
 
     (define (update-note! cfg id note)
-      (exec cfg (string-append
-                  "UPDATE files SET note = " (pg-quote-literal note)
-                  " WHERE id = " (pg-quote-int id))))
+      (exec cfg "UPDATE files SET note = $1 WHERE id = $2" (list note id)))
 
     ;; ---- DB helpers ----
-    (define (alist-rows cfg sql)
-      (with-db cfg (lambda (c) (pg-result->alist-list (pg-query c sql)))))
-    (define (exec cfg sql)
-      (with-db cfg (lambda (c) (pg-exec c sql))))
+    (define (alist-rows cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (pg-result->alist-list
+              (cond ((null? params) (pg-query c sql))
+                    (else (pg-query c (pg-format-sql sql params)))))))))
+    (define (exec cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (cond ((null? params) (pg-exec c sql))
+                  (else (pg-exec c (pg-format-sql sql params))))))))
 
     ;; ---- formatting ----
 

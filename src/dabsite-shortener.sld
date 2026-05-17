@@ -72,9 +72,8 @@
                   (lambda (c)
                     (pg-result-rows
                       (pg-query c
-                        (string-append
-                          "SELECT target FROM short_urls WHERE code = "
-                          (pg-quote-literal code))))))))
+                        "SELECT target FROM short_urls WHERE code = $1"
+                        code))))))
         (cond
           ((pair? rs) (vector-ref (car rs) 0))
           (else #f))))
@@ -86,18 +85,16 @@
         (with-db cfg
           (lambda (c)
             (pg-exec c
-              (string-append
-                "UPDATE short_urls SET hits = hits + 1 WHERE code = "
-                (pg-quote-literal code)))))))
+              "UPDATE short_urls SET hits = hits + 1 WHERE code = $1"
+              code)))))
 
     (define (code-exists? cfg code)
       (let ((rs (with-db cfg
                   (lambda (c)
                     (pg-result-rows
                       (pg-query c
-                        (string-append
-                          "SELECT 1 FROM short_urls WHERE code = "
-                          (pg-quote-literal code) " LIMIT 1")))))))
+                        "SELECT 1 FROM short_urls WHERE code = $1 LIMIT 1"
+                        code))))))
         (pair? rs)))
 
     (define (allocate-code cfg)
@@ -114,19 +111,15 @@
       (with-db cfg
         (lambda (c)
           (pg-exec c
-            (string-append
-              "INSERT INTO short_urls (code, target, note) VALUES ("
-              (pg-quote-literal code) ", "
-              (pg-quote-literal target) ", "
-              (pg-quote-literal note) ")")))))
+            "INSERT INTO short_urls (code, target, note) VALUES ($1, $2, $3)"
+            code target note))))
 
     (define (delete-code! cfg code)
       (with-db cfg
         (lambda (c)
           (pg-exec c
-            (string-append
-              "DELETE FROM short_urls WHERE code = "
-              (pg-quote-literal code))))))
+            "DELETE FROM short_urls WHERE code = $1"
+            code))))
 
     (define (list-codes cfg)
       (with-db cfg

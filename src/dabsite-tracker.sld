@@ -137,12 +137,26 @@
     ;; DB helpers
     ;; ============================================================
 
-    (define (alist-rows cfg sql)
-      (with-db cfg (lambda (c) (pg-result->alist-list (pg-query c sql)))))
-    (define (rows cfg sql)
-      (with-db cfg (lambda (c) (pg-result-rows (pg-query c sql)))))
-    (define (exec cfg sql)
-      (with-db cfg (lambda (c) (pg-exec c sql))))
+    (define (alist-rows cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (pg-result->alist-list
+              (cond ((null? params) (pg-query c sql))
+                    (else (pg-query c (pg-format-sql sql params)))))))))
+    (define (rows cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (pg-result-rows
+              (cond ((null? params) (pg-query c sql))
+                    (else (pg-query c (pg-format-sql sql params)))))))))
+    (define (exec cfg sql . maybe-params)
+      (let ((params (if (null? maybe-params) '() (car maybe-params))))
+        (with-db cfg
+          (lambda (c)
+            (cond ((null? params) (pg-exec c sql))
+                  (else (pg-exec c (pg-format-sql sql params))))))))
 
     ;; --- topics ---
 
@@ -158,10 +172,8 @@
 
     (define (find-topic-id cfg name)
       (let ((rs (rows cfg
-                  (string-append
-                    "SELECT id FROM tracker_topics WHERE name = "
-                    (pg-quote-literal name)
-                    " LIMIT 1"))))
+                  "SELECT id FROM tracker_topics WHERE name = $1 LIMIT 1"
+                  (list name))))
         (cond
           ((pair? rs)
            (string->number (vector-ref (car rs) 0)))
@@ -176,30 +188,25 @@
            (with-db cfg
              (lambda (c)
                (let ((res (pg-query c
-                            (string-append
-                              "INSERT INTO tracker_topics (name) VALUES ("
-                              (pg-quote-literal name)
-                              ") RETURNING id"))))
+                            "INSERT INTO tracker_topics (name) VALUES ($1) RETURNING id"
+                            name)))
                  (string->number (vector-ref (car (pg-result-rows res)) 0)))))))))
 
     (define (create-topic! cfg name)
-      (exec cfg (string-append
-                  "INSERT INTO tracker_topics (name) VALUES ("
-                  (pg-quote-literal name)
-                  ") ON CONFLICT (name) DO NOTHING")))
+      (exec cfg
+            "INSERT INTO tracker_topics (name) VALUES ($1) ON CONFLICT (name) DO NOTHING"
+            (list name)))
 
     (define (toggle-topic-archived! cfg id)
-      (exec cfg (string-append
-                  "UPDATE tracker_topics SET archived = NOT archived "
-                  "WHERE id = " (pg-quote-int id))))
+      (exec cfg
+            "UPDATE tracker_topics SET archived = NOT archived WHERE id = $1"
+            (list id)))
 
     (define (delete-topic! cfg id)
       ;; Only deletes if no entries reference this topic — the FK is
       ;; RESTRICT on tracker_done_topics. If it's in use the user must
       ;; archive instead.
-      (exec cfg (string-append
-                  "DELETE FROM tracker_topics WHERE id = "
-                  (pg-quote-int id))))
+      (exec cfg "DELETE FROM tracker_topics WHERE id = $1" (list id)))
 
     ;; --- entries ---
 
@@ -302,31 +309,24 @@
           (pg-exec c "BEGIN")
           (guard (exn (#t (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
                           (raise exn)))
-            (let* ((completed-sql
-                     (cond
-                       ((or (not completed-str) (string=? completed-str ""))
-                        "now()")
-                       (else
-                        (string-append (pg-quote-literal completed-str)
-                                       "::timestamptz"))))
-                   (res (pg-query c
-                          (string-append
-                            "INSERT INTO tracker_done (text, minutes, completed) VALUES ("
-                            (pg-quote-literal text) ", "
-                            (pg-quote-int minutes) ", "
-                            completed-sql
-                            ") RETURNING id")))
+            (let* ((use-now? (or (not completed-str) (string=? completed-str "")))
+                   (res (cond
+                          (use-now?
+                           (pg-query c
+                             "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, now()) RETURNING id"
+                             text minutes))
+                          (else
+                           (pg-query c
+                             "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, $3::timestamptz) RETURNING id"
+                             text minutes completed-str))))
                    (did (string->number (vector-ref (car (pg-result-rows res)) 0))))
               ;; Topics — ensure each exists, then link.
               (for-each
                 (lambda (name)
                   (let ((tid (ensure-topic-c! c name)))
                     (pg-exec c
-                      (string-append
-                        "INSERT INTO tracker_done_topics (done_id, topic_id) "
-                        "VALUES (" (pg-quote-int did) ", "
-                        (pg-quote-int tid) ") "
-                        "ON CONFLICT DO NOTHING"))))
+                      "INSERT INTO tracker_done_topics (done_id, topic_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                      did tid)))
                 topic-names)
               (pg-exec c "COMMIT")
               did)))))
@@ -334,23 +334,19 @@
     (define (ensure-topic-c! c name)
       ;; In-transaction variant of ensure-topic!.
       (let* ((sel (pg-result-rows
-                    (pg-query c (string-append
-                                  "SELECT id FROM tracker_topics WHERE name = "
-                                  (pg-quote-literal name)
-                                  " LIMIT 1")))))
+                    (pg-query c
+                      "SELECT id FROM tracker_topics WHERE name = $1 LIMIT 1"
+                      name))))
         (cond
           ((pair? sel) (string->number (vector-ref (car sel) 0)))
           (else
            (let ((res (pg-query c
-                        (string-append
-                          "INSERT INTO tracker_topics (name) VALUES ("
-                          (pg-quote-literal name)
-                          ") RETURNING id"))))
+                        "INSERT INTO tracker_topics (name) VALUES ($1) RETURNING id"
+                        name)))
              (string->number (vector-ref (car (pg-result-rows res)) 0)))))))
 
     (define (delete-entry! cfg id)
-      (exec cfg (string-append "DELETE FROM tracker_done WHERE id = "
-                               (pg-quote-int id))))
+      (exec cfg "DELETE FROM tracker_done WHERE id = $1" (list id)))
 
     (define (find-entry-row cfg id)
       ;; Returns the same alist shape list-entries does, plus a separate
@@ -366,8 +362,9 @@
                     "FROM tracker_done d "
                     "LEFT JOIN tracker_done_topics dt ON dt.done_id = d.id "
                     "LEFT JOIN tracker_topics t ON t.id = dt.topic_id "
-                    "WHERE d.id = " (pg-quote-int id) " "
-                    "GROUP BY d.id"))))
+                    "WHERE d.id = $1 "
+                    "GROUP BY d.id")
+                  (list id))))
         (cond ((pair? rs) (car rs)) (else #f))))
 
     (define (edit-when-string s)
