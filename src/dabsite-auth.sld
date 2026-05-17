@@ -53,14 +53,14 @@
       ;; Format: pbkdf2$<iter>$<salt-b64>$<hash-b64>
       ;; Returns three values via a 3-list: (iter salt-bv hash-bv).
       (let ((parts (split-on-dollar s)))
-        (when (not (= 4 (length parts)))
+        (unless (= 4 (length parts))
           (error "auth: malformed pbkdf2 hash"))
-        (when (not (string=? (car parts) "pbkdf2"))
+        (unless (string=? (car parts) "pbkdf2")
           (error "auth: not a pbkdf2 hash"))
         (let ((iter (string->number (cadr parts)))
               (salt (base64-decode (caddr parts)))
               (hash (base64-decode (cadddr parts))))
-          (when (not iter) (error "auth: bad iteration count"))
+          (unless iter (error "auth: bad iteration count"))
           (list iter salt hash))))
 
     (define (make-auth cookie-name cookie-secret cookie-max-age
@@ -104,21 +104,18 @@
         (string-append b64 "." (bytevector->hex mac))))
 
     (define (verify-token auth token)
-      (cond
-        ((or (not token) (string=? token "")) #f)
-        (else
-         (let ((dot (string-index token #\.)))
-           (cond
-             ((not dot) #f)
-             (else
-              (guard (exn (#t #f))
-                (let* ((b64  (substring token 0 dot))
-                       (mac  (substring token (+ dot 1)
-                                        (string-length token)))
-                       (pl   (base64-decode b64))
-                       (calc (sign-bytes (auth-cookie-secret auth) pl))
-                       (got  (hex->bytevector mac)))
-                  (constant-time-bytevector=? calc got)))))))))
+      (and (string? token)
+           (not (string=? token ""))
+           (let ((dot (string-index token #\.)))
+             (and dot
+                  (guard (exn (#t #f))
+                    (let* ((b64  (substring token 0 dot))
+                           (mac  (substring token (+ dot 1)
+                                            (string-length token)))
+                           (pl   (base64-decode b64))
+                           (calc (sign-bytes (auth-cookie-secret auth) pl))
+                           (got  (hex->bytevector mac)))
+                      (constant-time-bytevector=? calc got)))))))
 
     ;; --- request inspection ---
 
@@ -168,9 +165,9 @@
     (define (install-auth-routes! router auth secure-cookies?)
       (router-add! router "GET" "/login"
         (lambda (req params)
-          (cond
-            ((authed? auth req) (redirect "/"))
-            (else (html-ok (login-page-html #f))))))
+          (if (authed? auth req)
+              (redirect "/")
+              (html-ok (login-page-html #f)))))
 
       (router-add! router "POST" "/login"
         (lambda (req params)
@@ -213,8 +210,8 @@
 
     (define (require-auth auth handler)
       (lambda (req params)
-        (cond
-          ((authed? auth req) (handler req params))
-          (else (redirect "/login")))))
+        (if (authed? auth req)
+            (handler req params)
+            (redirect "/login"))))
 
 ))

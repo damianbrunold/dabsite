@@ -9,6 +9,7 @@
           (scm net http forms)
           (scm html builder)
           (dabsite db)
+          (dabsite util)
           (dabsite auth)
           (dabsite views)
           (dabsite markdown))
@@ -63,9 +64,7 @@
         (if p (cdr p) "")))
 
     (define (render-page-source format source)
-      (cond
-        ((string=? format "html")     source)
-        (else                         (render-markdown source))))
+      (if (string=? format "html") source (render-markdown source)))
 
     (define (save-page! cfg slug title format source)
       (let ((html (render-page-source format source)))
@@ -88,16 +87,15 @@
       (let ((cached (page-field page "html_cache"))
             (source (page-field page "source"))
             (format (page-field page "format")))
-        (cond
-          ((and cached (> (string-length cached) 0)) cached)
-          (else
-           (let ((html (render-page-source format source)))
+        (if (non-empty-string? cached)
+            cached
+            (let ((html (render-page-source format source)))
              (with-db cfg
                (lambda (c)
                  (pg-exec c
                    "UPDATE pages SET html_cache = $1, updated_at = now() WHERE slug = $2"
                    html (page-field page "slug"))))
-             html)))))
+             html))))
 
     ;; --- views ---
 
@@ -123,13 +121,14 @@
 
     (define (render-edit-view req auth cfg slug)
       (let* ((existing (page-by-slug cfg slug))
-             (title    (if existing (page-field existing "title")
-                           (cond ((string=? slug "home") "Damian Brunold")
-                                 (else slug))))
+             (title    (if existing
+                           (page-field existing "title")
+                           (if (string=? slug "home") "Damian Brunold" slug)))
              (format   (if existing (page-field existing "format") "markdown"))
              (source   (if existing (page-field existing "source") ""))
-             (cancel-href (cond ((string=? slug "home") "/")
-                                (else (string-append "/p/" slug))))
+             (cancel-href (if (string=? slug "home")
+                              "/"
+                              (string-append "/p/" slug)))
              (body
                `((h1 "Edit: " ,slug)
                  (form (@ (method "post")
@@ -163,10 +162,8 @@
       (let* ((slug    (page-field row "slug"))
              (title   (page-field row "title"))
              (updated (page-field row "updated"))
-             (view-href (cond ((string=? slug "home") "/")
-                              (else (string-append "/p/" slug))))
-             (display-title (cond ((string=? title "") slug)
-                                  (else title))))
+             (view-href (if (string=? slug "home") "/" (string-append "/p/" slug)))
+             (display-title (if (string=? title "") slug title)))
         `(li (a (@ (class "row") (href ,view-href))
                 (span (@ (class "name")) ,display-title)
                 (span (@ (class "meta"))
@@ -217,17 +214,17 @@
              (title  (form-ref form "title" ""))
              (format (form-ref form "format" "markdown"))
              (source (form-ref form "source" "")))
-        (cond
-          ((or (= 0 (string-length (string-trim-both slug)))
-               (= 0 (string-length (string-trim-both title))))
-           (render-error 400 "Slug and title are required."))
-          (else
-           (save-page! cfg slug title format source)
-           (make-http-response 302
-             (list (cons "Location"
-                         (cond ((string=? slug "home") "/")
-                               (else (string-append "/p/" slug)))))
-             "")))))
+        (if (or (not (non-empty-trimmed? slug))
+                (not (non-empty-trimmed? title)))
+            (render-error 400 "Slug and title are required.")
+            (begin
+              (save-page! cfg slug title format source)
+              (make-http-response 302
+                (list (cons "Location"
+                            (if (string=? slug "home")
+                                "/"
+                                (string-append "/p/" slug))))
+                "")))))
 
     ;; --- route registration ---
 

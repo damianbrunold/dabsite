@@ -201,7 +201,7 @@
         (cond
           ((null? ls) #t)
           (else
-           (when (not first?) (write-char #\space out))
+           (unless first? (write-char #\space out))
            (render-inline (car ls) out)
            (loop (cdr ls) #f))))
       (write-string "</p>\n" out))
@@ -222,7 +222,7 @@
         (cond
           ((null? ls) #t)
           (else
-           (when (not first?) (write-char #\newline out))
+           (unless first? (write-char #\newline out))
            (write-escaped (car ls) out)
            (loop (cdr ls) #f))))
       (write-string "</code></pre>\n" out))

@@ -13,6 +13,7 @@
           (scm html builder)
           (scm uri)
           (dabsite db)
+          (dabsite util)
           (dabsite auth)
           (dabsite markdown)
           (dabsite views))
@@ -114,27 +115,27 @@
                             "to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
                             "FROM notes WHERE name = $1 LIMIT 1")
                           name))))))
-        (if (pair? rows) (car rows) #f)))
+        (and (pair? rows) (car rows))))
 
     (define (list-notes cfg q)
       (let* ((base (string-append "SELECT id, name, "
                                   "  substring(body, 1, 160) AS preview, "
                                   "  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
                                   "FROM notes "))
-             (has-q (and q (> (string-length (string-trim-both q)) 0)))
-             (where (cond
-                      (has-q
-                       (string-append
-                         "WHERE to_tsvector('simple', name || ' ' || body) "
-                         "@@ plainto_tsquery('simple', $1) "))
-                      (else "")))
+             (has-q (and q (non-empty-trimmed? q)))
+             (where (if has-q
+                        (string-append
+                          "WHERE to_tsvector('simple', name || ' ' || body) "
+                          "@@ plainto_tsquery('simple', $1) ")
+                        ""))
              (order "ORDER BY updated_at DESC LIMIT 200")
              (sql (string-append base where order)))
         (with-db cfg
           (lambda (c)
             (pg-result->alist-list
-              (cond (has-q (pg-query c sql q))
-                    (else  (pg-query c sql))))))))
+              (if has-q
+                  (pg-query c sql q)
+                  (pg-query c sql)))))))
 
     (define (create-note! cfg name body)
       (with-db cfg
@@ -280,8 +281,7 @@
       (let* ((form  (parse-www-form (or (http-request-body req) "")))
              (raw   (string-trim-both (form-ref form "name" "")))
              (body  (form-ref form "body" ""))
-             (name  (cond ((= 0 (string-length raw)) (allocate-name cfg))
-                          (else raw))))
+             (name  (if (string=? raw "") (allocate-name cfg) raw)))
         (cond
           ((not (valid-name? name))
            (render-edit-form req auth "" body

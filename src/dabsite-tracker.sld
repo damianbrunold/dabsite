@@ -13,6 +13,7 @@
           (scm html builder)
           (scm uri)
           (dabsite db)
+          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-tracker-routes!
@@ -35,8 +36,7 @@
              (h-str (number->string h))
              (m-str (number->string m)))
         (string-append h-str ":"
-                       (cond ((< m 10) (string-append "0" m-str))
-                             (else m-str))
+                       (if (< m 10) (string-append "0" m-str) m-str)
                        "h")))
 
     (define (parse-minutes s)
@@ -82,13 +82,11 @@
              ((let ((n (string-length s)))
                 (and (> n 0) (char=? (string-ref s (- n 1)) #\m)))
               (let ((m (string->number (substring s 0 (- (string-length s) 1)))))
-                (cond ((and m (integer? m) (>= m 0)) (exact m))
-                      (else #f))))
+                (and m (integer? m) (>= m 0) (exact m))))
              ;; plain integer = minutes
              (else
               (let ((n (string->number s)))
-                (cond ((and n (integer? n) (>= n 0)) (exact n))
-                      (else #f)))))))))
+                (and n (integer? n) (>= n 0) (exact n)))))))))
 
     (define (csv-escape s)
       ;; If the field contains , or " or newlines, wrap in quotes and
@@ -137,27 +135,6 @@
     ;; DB helpers
     ;; ============================================================
 
-    (define (alist-rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result->alist-list
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-    (define (rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result-rows
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-    (define (exec cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (cond ((null? params) (pg-exec c sql))
-                  (else (pg-exec c (pg-format-sql sql params))))))))
-
     ;; --- topics ---
 
     (define (list-topics cfg include-archived?)
@@ -166,18 +143,14 @@
           "SELECT id::text AS id, name, "
           "       CASE WHEN archived THEN 'yes' ELSE 'no' END AS archived "
           "FROM tracker_topics "
-          (cond (include-archived? "")
-                (else "WHERE archived = false "))
+          (if include-archived? "" "WHERE archived = false ")
           "ORDER BY name")))
 
     (define (find-topic-id cfg name)
       (let ((rs (rows cfg
                   "SELECT id FROM tracker_topics WHERE name = $1 LIMIT 1"
                   (list name))))
-        (cond
-          ((pair? rs)
-           (string->number (vector-ref (car rs) 0)))
-          (else #f))))
+        (and (pair? rs) (string->number (vector-ref (car rs) 0)))))
 
     (define (ensure-topic! cfg name)
       ;; Returns the topic id (creates if missing).
@@ -224,7 +197,7 @@
           (set! n (+ n 1))
           (set! params (append params (list v)))
           (string-append "$" (number->string n)))
-        (when (and q (> (string-length (string-trim-both q)) 0))
+        (when (and q (non-empty-trimmed? q))
           (set! clauses
                 (cons (string-append
                         "to_tsvector('simple', d.text) "
@@ -238,7 +211,7 @@
                         (add-param! (list->vector topics)) ")")
                       clauses)))
         (cond
-          ((and from-d (not (string=? from-d "")))
+          ((non-empty-string? from-d)
            (set! clauses
                  (cons (string-append
                          "d.completed >= " (add-param! from-d) "::timestamptz")
@@ -250,7 +223,7 @@
                          (number->string default-list-window-days)
                          " days'")
                        clauses))))
-        (when (and to-d (not (string=? to-d "")))
+        (when (non-empty-string? to-d)
           (set! clauses
                 (cons (string-append
                         "d.completed < (" (add-param! to-d)
@@ -290,8 +263,9 @@
                     "SELECT COALESCE(SUM(minutes), 0)::text AS total_minutes, "
                     "       COUNT(*)::text AS n_entries "
                     "FROM tracker_done d WHERE " today-clause))))
-        (cond ((pair? rs) (car rs))
-              (else '(("total_minutes" . "0") ("n_entries" . "0"))))))
+        (if (pair? rs)
+            (car rs)
+            '(("total_minutes" . "0") ("n_entries" . "0")))))
 
     (define (summary-by-topic cfg)
       ;; Returns alist rows with topic, total_minutes, entries for TODAY.
@@ -316,15 +290,13 @@
           (guard (exn (#t (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
                           (raise exn)))
             (let* ((use-now? (or (not completed-str) (string=? completed-str "")))
-                   (res (cond
-                          (use-now?
-                           (pg-query c
-                             "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, now()) RETURNING id"
-                             text minutes))
-                          (else
-                           (pg-query c
-                             "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, $3::timestamptz) RETURNING id"
-                             text minutes completed-str))))
+                   (res (if use-now?
+                            (pg-query c
+                              "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, now()) RETURNING id"
+                              text minutes)
+                            (pg-query c
+                              "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, $3::timestamptz) RETURNING id"
+                              text minutes completed-str)))
                    (did (string->number (vector-ref (car (pg-result-rows res)) 0))))
               ;; Topics — ensure each exists, then link.
               (for-each
@@ -371,7 +343,7 @@
                     "WHERE d.id = $1 "
                     "GROUP BY d.id")
                   (list id))))
-        (cond ((pair? rs) (car rs)) (else #f))))
+        (and (pair? rs) (car rs))))
 
     (define (edit-when-string s)
       ;; Pass through; the SQL already formats the value as YYYY-MM-DDTHH:MM
@@ -381,8 +353,6 @@
     ;; ============================================================
     ;; Views
     ;; ============================================================
-
-    (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
     (define (filters-sxml q topics-selected from-d to-d topics)
       `(form (@ (method "get") (action "/tracker") (class "feed-filters"))
@@ -396,7 +366,7 @@
                     (let ((tid (row-field t "id")))
                       `(option (@ (value ,tid)
                                   (selected
-                                   ,(if (member tid topics-selected string=?) #t #f)))
+                                   ,(and (member tid topics-selected string=?) #t)))
                                ,(row-field t "name"))))
                   topics))
          (button (@ (type "submit")) "Apply")
@@ -406,17 +376,15 @@
       (let* ((total-mins (or (string->number
                                (row-field totals "total_minutes")) 0))
              (n-entries  (row-field totals "n_entries"))
-             (entry-word (cond ((equal? n-entries "1") " entry")
-                               (else " entries"))))
+             (entry-word (if (equal? n-entries "1") " entry" " entries")))
         `(section (@ (class "tracker-summary"))
            (h2 "Today "
                (span (@ (class "total"))
                      ,(format-minutes total-mins)
                      " across " ,n-entries ,entry-word))
-           ,@(cond
-               ((null? per-topic) '())
-               (else
-                `((ul (@ (class "tracker-summary-list"))
+           ,@(if (null? per-topic)
+                 '()
+                 `((ul (@ (class "tracker-summary-list"))
                     ,@(map
                        (lambda (s)
                          (let ((mins (or (string->number
@@ -428,7 +396,7 @@
                                 (span (@ (class "count"))
                                       ,(row-field s "entries")
                                       ,(raw "&nbsp;") "entr."))))
-                       per-topic))))))))
+                       per-topic)))))))
 
     (define (quick-add-sxml topics prefill)
       ;; prefill is an alist with keys 'text, 'minutes, 'topics, 'when.
@@ -547,11 +515,11 @@
       ;; Builds a query-string preserving the current filters for the CSV
       ;; export link.
       (let ((parts '()))
-        (when (and q (not (string=? q "")))
+        (when (non-empty-string? q)
           (set! parts (cons (string-append "q=" (percent-encode q)) parts)))
-        (when (and from-d (not (string=? from-d "")))
+        (when (non-empty-string? from-d)
           (set! parts (cons (string-append "from=" (percent-encode from-d)) parts)))
-        (when (and to-d (not (string=? to-d "")))
+        (when (non-empty-string? to-d)
           (set! parts (cons (string-append "to=" (percent-encode to-d)) parts)))
         (for-each
           (lambda (t)
@@ -639,10 +607,10 @@
                               (cons 'topics  (param-or req "edit_topics" ""))
                               (cons 'when    (param-or req "edit_when" "")))))
               (render-main req auth cfg
-                           (cond ((string=? q "") #f) (else q))
+                           (non-empty-or-false q)
                            tops
-                           (cond ((string=? from-d "") #f) (else from-d))
-                           (cond ((string=? to-d "") #f) (else to-d))
+                           (non-empty-or-false from-d)
+                           (non-empty-or-false to-d)
                            all?
                            prefill)))))
 
@@ -713,10 +681,10 @@
                    (tops   (params-all req "topic"))
                    (apply-window? (and (not all?) (string=? from-d "")))
                    (entries (list-entries cfg
-                              (cond ((string=? q "") #f) (else q))
+                              (non-empty-or-false q)
                               (map string->number tops)
-                              (cond ((string=? from-d "") #f) (else from-d))
-                              (cond ((string=? to-d "") #f) (else to-d))
+                              (non-empty-or-false from-d)
+                              (non-empty-or-false to-d)
                               apply-window?
                               10000))
                    (out    (open-output-string)))

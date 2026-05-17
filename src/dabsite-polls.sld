@@ -14,6 +14,7 @@
           (scm net http cookies)
           (scm html builder)
           (dabsite db)
+          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-poll-routes!
@@ -116,29 +117,6 @@
     ;; DB ops
     ;; ============================================================
 
-    (define (alist-rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result->alist-list
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-
-    (define (rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result-rows
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-
-    (define (exec cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (cond ((null? params) (pg-exec c sql))
-                  (else (pg-exec c (pg-format-sql sql params))))))))
-
     (define (poll-by-slug cfg slug)
       ;; "closed" in the result alist is the *effective* closed flag (true
       ;; when either the manual flag is set OR closes_at has passed) so
@@ -157,7 +135,7 @@
                    "       to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created "
                    "FROM polls WHERE slug = $1 LIMIT 1")
                  (list slug))))
-        (cond ((pair? r) (car r)) (else #f))))
+        (and (pair? r) (car r))))
 
     (define (poll-options cfg poll-id)
       (alist-rows cfg
@@ -194,13 +172,12 @@
 
     (define (allocate-slug cfg)
       (let loop ((tries 0))
-        (cond
-          ((>= tries 30)
-           (error "polls: failed to allocate a unique slug"))
-          (else
-           (let ((s (random-slug)))
-             (cond ((slug-exists? cfg s) (loop (+ tries 1)))
-                   (else s)))))))
+        (when (>= tries 30)
+          (error "polls: failed to allocate a unique slug"))
+        (let ((s (random-slug)))
+          (if (slug-exists? cfg s)
+              (loop (+ tries 1))
+              s))))
 
     (define (create-poll! cfg slug title description option-labels closes-at)
       ;; closes-at is either a string in "YYYY-MM-DDTHH:MM" form (from a
@@ -210,10 +187,7 @@
           (pg-exec c "BEGIN")
           (guard (exn (#t (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
                           (raise exn)))
-            (let* ((closes-val
-                     (cond
-                       ((or (not closes-at) (string=? closes-at "")) #f)
-                       (else closes-at)))
+            (let* ((closes-val (non-empty-or-false closes-at))
                    (res (cond
                           (closes-val
                            (pg-query c
@@ -228,8 +202,9 @@
                                "VALUES ($1, $2, $3, NULL) RETURNING id")
                              slug title description))))
                    (rows (pg-result-rows res))
-                   (id   (cond ((pair? rows) (vector-ref (car rows) 0))
-                               (else (error "create-poll!: no id returned"))))
+                   (id   (if (pair? rows)
+                             (vector-ref (car rows) 0)
+                             (error "create-poll!: no id returned")))
                    (poll-id (string->number id)))
               (let loop ((i 0) (ls option-labels))
                 (cond
@@ -263,7 +238,7 @@
                     "FROM poll_responses "
                     "WHERE poll_id = $1 AND owner_cookie = $2 LIMIT 1")
                   (list poll-id owner-cookie))))
-        (cond ((pair? rs) (car rs)) (else #f))))
+        (and (pair? rs) (car rs))))
 
     (define (find-existing-response-id c poll-id owner-cookie)
       (let ((rows (pg-result-rows
@@ -324,8 +299,6 @@
     ;; Views
     ;; ============================================================
 
-    (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
-
     (define (build-choice-map choices)
       ;; choices: list of alists with keys "response_id" "option_id" "value".
       ;; Returns alist ((response_id . option_id) . value).
@@ -337,7 +310,7 @@
 
     (define (choice-for-cell cmap response-id option-id)
       (let ((p (assoc (cons response-id option-id) cmap)))
-        (cond (p (cdr p)) (else ""))))
+        (if p (cdr p) "")))
 
     (define (cell-class v)
       (cond ((string=? v "yes")   "y")
@@ -430,7 +403,7 @@
            ,@(map (lambda (v)
                     `(label (@ (class ,(string-append "choice " v)))
                        (input (@ (type "radio") (name ,name) (value ,v)
-                                 (checked ,(if (string=? current v) #t #f))
+                                 (checked ,(string=? current v))
                                  (required #t)))
                        (span ,v)))
                   '("yes" "maybe" "no")))))
@@ -559,7 +532,7 @@
                        (html->string body)))))
 
     (define (render-admin-new req auth cfg . opt)
-      (let* ((msg (cond ((pair? opt) (car opt)) (else #f)))
+      (let* ((msg (and (pair? opt) (car opt)))
              (body
                `((header (@ (class "feeds-head"))
                    (h1 "New poll")
@@ -644,9 +617,9 @@
                  (render-admin-new req auth cfg
                    "Slug must match [a-z0-9_-]{1,64}."))
                 (else
-                 (let ((slug (cond ((string=? raw-slug "")
-                                    (allocate-slug cfg))
-                                   (else raw-slug))))
+                 (let ((slug (if (string=? raw-slug "")
+                                 (allocate-slug cfg)
+                                 raw-slug)))
                    (cond
                      ((and (not (string=? raw-slug ""))
                            (slug-exists? cfg slug))

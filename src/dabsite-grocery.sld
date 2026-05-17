@@ -10,6 +10,7 @@
           (scm net http forms)
           (scm html builder)
           (dabsite db)
+          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-grocery-routes!)
@@ -23,29 +24,6 @@
     ;;               default shop: all items, alphabetical)
     ;;   entries   — qty + bought flag, unique (list, item)
     ;; ============================================================
-
-    (define (alist-rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result->alist-list
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-    (define (exec cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (cond ((null? params) (pg-exec c sql))
-                  (else (pg-exec c (pg-format-sql sql params))))))))
-    (define (rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result-rows
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-
-    (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
     (define (string-split-comma s)
       (let ((n (string-length s)))
@@ -92,7 +70,7 @@
       (let ((rs (alist-rows cfg
                   "SELECT id::text AS id, name FROM grocery_shops WHERE id = $1"
                   (list id))))
-        (cond ((pair? rs) (car rs)) (else #f))))
+        (and (pair? rs) (car rs))))
 
     (define (create-shop! cfg name)
       ;; Inserts the shop and (atomically) seeds its order list with
@@ -239,7 +217,7 @@
                     "LEFT JOIN grocery_shops s ON s.id = l.shop_id "
                     "WHERE l.id = $1")
                   (list id))))
-        (cond ((pair? rs) (car rs)) (else #f))))
+        (and (pair? rs) (car rs))))
 
     (define (create-list! cfg shop-id)
       ;; shop-id may be #f (default shop) — pg-format-sql renders #f as NULL.
@@ -368,12 +346,10 @@
                                          ,(row-field s "name")))
                               shops)))
                    (button (@ (type "submit")) "New list"))
-                 ,(cond
-                    ((null? lists)
-                     `(p (@ (class "empty")) "No shopping lists yet."))
-                    (else
-                     `(ul (@ (class "grocery-lists"))
-                          ,@(map list-row-sxml lists)))))))
+                 ,(if (null? lists)
+                      `(p (@ (class "empty")) "No shopping lists yet.")
+                      `(ul (@ (class "grocery-lists"))
+                           ,@(map list-row-sxml lists))))))
         (page-sxml req auth "Grocery" 'grocery body)))
 
     ;; ---- one list ----
@@ -394,11 +370,11 @@
                      ,(raw (if bought "&#x2714;" "&nbsp;")))
                (span (@ (class "name"))
                      ,name
-                     ,@(cond ((> qty 1)
-                              `(" " (span (@ (class "qty"))
-                                          ,(string-append
-                                             "×" (number->string qty)))))
-                             (else '())))))
+                     ,@(if (> qty 1)
+                           `(" " (span (@ (class "qty"))
+                                       ,(string-append
+                                          "×" (number->string qty))))
+                           '()))))
            (form (@ (method "post")
                     (action ,(string-append action-base "/dec"))
                     (class "inline rm"))
@@ -411,46 +387,40 @@
     (define (entries-sxml list-id entries)
       `(section (@ (class "grocery-list"))
          (h2 "Shopping list")
-         ,(cond
-            ((null? entries)
-             `(p (@ (class "empty")) "Empty. Tap items below to add."))
-            (else
-             `(ul (@ (class "grocery-shopping"))
-                  ,@(map (lambda (e) (entry-sxml list-id e)) entries))))))
+         ,(if (null? entries)
+              `(p (@ (class "empty")) "Empty. Tap items below to add.")
+              `(ul (@ (class "grocery-shopping"))
+                   ,@(map (lambda (e) (entry-sxml list-id e)) entries)))))
 
     (define (catalog-item-sxml list-id entry-by-item i)
       (let* ((id   (row-field i "id"))
              (name (row-field i "name"))
              (e    (assoc id entry-by-item))
-             (qty  (cond
-                     (e (or (string->number (row-field (cdr e) "qty")) 0))
-                     (else 0)))
+             (qty  (if e (or (string->number (row-field (cdr e) "qty")) 0) 0))
              (lid  (number->string list-id)))
         `(li (form (@ (method "post")
                       (action ,(string-append "/grocery/lists/" lid "/add/" id))
                       (class "inline add"))
                (button (@ (type "submit") (class "add-btn"))
                  "+ " (span (@ (class "name")) ,name)
-                 ,@(cond ((> qty 0)
-                          `(" " (span (@ (class "qty"))
-                                      ,(string-append "·" (number->string qty)))))
-                         (else '())))))))
+                 ,@(if (> qty 0)
+                       `(" " (span (@ (class "qty"))
+                                   ,(string-append "·" (number->string qty))))
+                       '()))))))
 
     (define (catalog-sxml list-id catalog entry-by-item)
       `(section (@ (class "grocery-catalog"))
          (h2 "Add items")
-         ,(cond
-            ((null? catalog)
-             `(p (@ (class "empty"))
-                 "This shop has no items yet. "
-                 "Add some on the "
-                 (a (@ (href "/grocery/shops")) "shops")
-                 " page."))
-            (else
-             `(ul (@ (class "grocery-items"))
-                  ,@(map (lambda (i)
-                           (catalog-item-sxml list-id entry-by-item i))
-                         catalog))))))
+         ,(if (null? catalog)
+              `(p (@ (class "empty"))
+                  "This shop has no items yet. "
+                  "Add some on the "
+                  (a (@ (href "/grocery/shops")) "shops")
+                  " page.")
+              `(ul (@ (class "grocery-items"))
+                   ,@(map (lambda (i)
+                            (catalog-item-sxml list-id entry-by-item i))
+                          catalog)))))
 
     (define (render-list req auth cfg list-id)
       (let ((l (find-list cfg list-id)))
@@ -462,12 +432,8 @@
                   (entries (list-entries cfg list-id shop-id))
                   (catalog (shop-items cfg shop-id))
                   (entry-by-item-id
-                    (let ((h '()))
-                      (for-each
-                        (lambda (e)
-                          (set! h (cons (cons (row-field e "item_id") e) h)))
-                        entries)
-                      h))
+                    (map (lambda (e) (cons (row-field e "item_id") e))
+                         entries))
                   (lid (number->string list-id))
                   (body
                     `((header (@ (class "feeds-head"))
@@ -653,7 +619,7 @@
           (lambda (req params)
             (let* ((form (parse-www-form (or (http-request-body req) "")))
                    (name (string-trim-both (form-ref form "name" ""))))
-              (when (not (string=? name "")) (create-item! cfg name))
+              (unless (string=? name "") (create-item! cfg name))
               (redirect "/grocery/items")))))
 
       (router-add! router "POST" "/grocery/items/:id/delete"
@@ -672,7 +638,7 @@
           (lambda (req params)
             (let* ((form (parse-www-form (or (http-request-body req) "")))
                    (name (string-trim-both (form-ref form "name" ""))))
-              (when (not (string=? name "")) (create-shop! cfg name))
+              (unless (string=? name "") (create-shop! cfg name))
               (redirect "/grocery/shops")))))
 
       (router-add! router "POST" "/grocery/shops/:id/delete"
@@ -698,8 +664,9 @@
         (require-auth auth
           (lambda (req params)
             (let ((id (string->number (params-ref params "id"))))
-              (cond (id (render-shop req auth cfg id))
-                    (else (render-error 404 "Shop not found.")))))))
+              (if id
+                  (render-shop req auth cfg id)
+                  (render-error 404 "Shop not found."))))))
 
       (router-add! router "POST" "/grocery/shops/:id/items/:item_id/add"
         (require-auth auth
@@ -756,8 +723,7 @@
           (lambda (req params)
             (let* ((form (parse-www-form (or (http-request-body req) "")))
                    (raw  (form-ref form "shop" ""))
-                   (sid  (cond ((string=? raw "") #f)
-                               (else (string->number raw))))
+                   (sid  (and (not (string=? raw "")) (string->number raw)))
                    (id   (create-list! cfg sid)))
               (redirect (string-append "/grocery/lists/"
                                        (number->string id)))))))
@@ -766,8 +732,9 @@
         (require-auth auth
           (lambda (req params)
             (let ((id (string->number (params-ref params "id"))))
-              (cond (id (render-list req auth cfg id))
-                    (else (render-error 404 "List not found.")))))))
+              (if id
+                  (render-list req auth cfg id)
+                  (render-error 404 "List not found."))))))
 
       (router-add! router "POST" "/grocery/lists/:id/delete"
         (require-auth auth

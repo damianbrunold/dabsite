@@ -20,6 +20,7 @@
           (scm duration)
           (scm datetime)
           (dabsite db)
+          (dabsite util)
           (dabsite auth)
           (dabsite views)
           (dabsite feeds-fetcher))
@@ -33,42 +34,19 @@
     ;; DB ops. All SQL flows through (dabsite db) helpers.
     ;; ==============================================================
 
-    (define (rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result-rows
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-
-    (define (alist-rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result->alist-list
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-
-    (define (exec cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (cond ((null? params) (pg-exec c sql))
-                  (else (pg-exec c (pg-format-sql sql params))))))))
-
     ;; --- entries listing ---
 
     (define (build-filter q category show-all?)
       ;; Returns a SQL WHERE clause (without leading WHERE) and ORDER BY.
       (let ((clauses (list "fe.deleted_at IS NULL")))
-        (when (not show-all?)
+        (unless show-all?
           (set! clauses (cons "fe.read_at IS NULL" clauses)))
-        (when (and category (not (string=? category "")))
+        (when (non-empty-string? category)
           (set! clauses
                 (cons (string-append "f.category = "
                                      (pg-quote-literal category))
                       clauses)))
-        (when (and q (> (string-length (string-trim-both q)) 0))
+        (when (and q (non-empty-trimmed? q))
           (set! clauses
                 (cons (string-append
                         "to_tsvector('simple', fe.title || ' ' || fe.summary) "
@@ -171,7 +149,7 @@
 
     (define (mark-all-read! cfg category)
       (cond
-        ((and category (not (string=? category "")))
+        ((non-empty-string? category)
          (exec cfg
                (string-append
                  "UPDATE feed_entries SET read_at = now() "
@@ -190,7 +168,7 @@
       ;; is based on fetched_at — the same field that drives display
       ;; ordering — so what looks "old" in the list is what gets dismissed.
       (cond
-        ((and category (not (string=? category "")))
+        ((non-empty-string? category)
          (exec cfg
                (string-append
                  "UPDATE feed_entries SET read_at = now() "
@@ -315,29 +293,29 @@
       (let ((clauses (list "fe.pinned_at IS NOT NULL")))
         (when stale-only?
           (set! clauses (cons "fe.link_status = 'stale'" clauses)))
-        (when (and category (not (string=? category "")))
+        (when (non-empty-string? category)
           (set! clauses
                 (cons (string-append
                         "COALESCE(f.category, fe.manual_category, 'misc') = "
                         (pg-quote-literal category))
                       clauses)))
-        (when (and feed-id (not (string=? feed-id "")))
+        (when (non-empty-string? feed-id)
           (set! clauses
                 (cons (string-append
                         "fe.feed_id = " (pg-quote-literal feed-id) "::bigint")
                       clauses)))
-        (when (and since (not (string=? since "")))
+        (when (non-empty-string? since)
           (set! clauses
                 (cons (string-append
                         "fe.pinned_at >= " (pg-quote-literal since) "::date")
                       clauses)))
-        (when (and until (not (string=? until "")))
+        (when (non-empty-string? until)
           (set! clauses
                 (cons (string-append
                         "fe.pinned_at < (" (pg-quote-literal until)
                         "::date + INTERVAL '1 day')")
                       clauses)))
-        (when (and q (> (string-length (string-trim-both q)) 0))
+        (when (and q (non-empty-trimmed? q))
           (set! clauses
                 (cons (string-append
                         "to_tsvector('simple', fe.title || ' ' || fe.summary) "
@@ -637,9 +615,6 @@
                  "failure_count = 0 WHERE id = $1")
                (list id)))))
 
-    (define (assoc-val alist key)
-      (let ((p (assoc key alist))) (if p (cdr p) #f)))
-
     (define (title-key title)
       ;; Mirror the generated-column expression in the DB so the membership
       ;; test compares the same canonical form. Lowercase + collapse all
@@ -656,7 +631,7 @@
                (cond
                  ((or (char=? c #\space) (char=? c #\tab)
                       (char=? c #\newline) (char=? c #\return))
-                  (when (not in-ws?) (write-char #\space out))
+                  (unless in-ws? (write-char #\space out))
                   (loop (+ i 1) #t))
                  (else
                   (write-char (char-downcase c) out)
@@ -873,7 +848,6 @@
     ;; Views
     ;; ==============================================================
 
-    (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
     (define (feed-entry-sxml row . maybe-return-to)
       ;; Returns the SXML for one feed entry. The tooltip combines the
@@ -1046,7 +1020,7 @@
                            (string-append c " (" (number->string n) ")"))
                           (else c))))
         `(option (@ (value ,c)
-                    (selected ,(and current-category (string=? current-category c) #t)))
+                    (selected ,(and current-category (string=? current-category c))))
                  ,label)))
 
     (define (render-feeds-page req auth cfg q category show-all?)
@@ -1093,7 +1067,7 @@
                               cats))
                      (label (@ (class "checkbox"))
                        (input (@ (type "checkbox") (name "all") (value "1")
-                                 (checked ,(if show-all? #t #f))))
+                                 (checked ,show-all?)))
                        "show archive")
                      (button (@ (type "submit")) "Apply")
                      (a (@ (class "admin-link") (href "/feeds/pinned"))
@@ -1142,34 +1116,37 @@
 
     (define (pinned-cat-option-sxml current c)
       `(option (@ (value ,c)
-                  (selected ,(and current (string=? current c) #t))) ,c))
+                  (selected ,(and current (string=? current c)))) ,c))
 
     (define (pinned-feed-option-sxml current f)
       (let ((id    (cdr (assoc "id" f)))
             (title (cdr (assoc "title" f))))
         `(option (@ (value ,id)
-                    (selected ,(and current (string=? current id) #t)))
+                    (selected ,(and current (string=? current id))))
                  ,title)))
+
+    (define pinned-base "/feeds/pinned")
+
+    (define (pinned-url . kvs)
+      ;; kvs: list of (key . value) pairs. Empty/missing values are omitted.
+      (let* ((parts (filter-map
+                      (lambda (kv)
+                        (and (non-empty-string? (cdr kv))
+                             (string-append (percent-encode (car kv)) "="
+                                            (percent-encode (cdr kv)))))
+                      kvs))
+             (qs (string-join parts "&")))
+        (if (string=? qs "") pinned-base (string-append pinned-base "?" qs))))
 
     (define (pinned-page-url q category feed-id since until stale-only?)
       ;; Mirrors pinned-redirect (which works from a parsed form). Used
       ;; when rendering, where we have the parsed values directly.
-      (let* ((parts '())
-             (add!  (lambda (k v)
-                      (when (and v (not (string=? v "")))
-                        (set! parts
-                              (cons (string-append (percent-encode k) "="
-                                                   (percent-encode v))
-                                    parts))))))
-        (add! "q"     (or q ""))
-        (add! "cat"   (or category ""))
-        (add! "feed"  (or feed-id ""))
-        (add! "since" (or since ""))
-        (add! "until" (or until ""))
-        (when stale-only? (add! "stale" "1"))
-        (let ((qs (string-join (reverse parts) "&")))
-          (cond ((string=? qs "") "/feeds/pinned")
-                (else (string-append "/feeds/pinned?" qs))))))
+      (pinned-url (cons "q"     (or q ""))
+                  (cons "cat"   (or category ""))
+                  (cons "feed"  (or feed-id ""))
+                  (cons "since" (or since ""))
+                  (cons "until" (or until ""))
+                  (cons "stale" (if stale-only? "1" ""))))
 
     (define (render-pinned-page req auth cfg q category feed-id since until
                                  stale-only? msg)
@@ -1185,19 +1162,19 @@
              ;; every filter value so the server-side bulk action matches
              ;; what the user actually sees.
              (hidden-filters
-               `(,@(if (and q (not (string=? q "")))
+               `(,@(if (non-empty-string? q)
                        `((input (@ (type "hidden") (name "q") (value ,q))))
                        '())
-                 ,@(if (and category (not (string=? category "")))
+                 ,@(if (non-empty-string? category)
                        `((input (@ (type "hidden") (name "cat") (value ,category))))
                        '())
-                 ,@(if (and feed-id (not (string=? feed-id "")))
+                 ,@(if (non-empty-string? feed-id)
                        `((input (@ (type "hidden") (name "feed") (value ,feed-id))))
                        '())
-                 ,@(if (and since (not (string=? since "")))
+                 ,@(if (non-empty-string? since)
                        `((input (@ (type "hidden") (name "since") (value ,since))))
                        '())
-                 ,@(if (and until (not (string=? until "")))
+                 ,@(if (non-empty-string? until)
                        `((input (@ (type "hidden") (name "until") (value ,until))))
                        '())
                  ,@(if stale-only?
@@ -1232,7 +1209,7 @@
                              (title "add URL"))
                       "＋"))
                  ,(cond
-                    ((and msg (not (string=? msg "")))
+                    ((non-empty-string? msg)
                      `(p (@ (class "flash")) ,msg))
                     (else ""))
                  (input (@ (type "checkbox") (id "pinned-filters-toggle")
@@ -1259,7 +1236,7 @@
                                  (value ,(or until "")))))
                      (label (@ (class "checkbox"))
                        (input (@ (type "checkbox") (name "stale") (value "1")
-                                 (checked ,(if stale-only? #t #f))))
+                                 (checked ,stale-only?)))
                        "stale only")
                      (button (@ (type "submit")) "Apply"))
                   ;; Bulk-action bar lives inside filters-wrap too, so
@@ -1271,7 +1248,7 @@
                             (class "inline")
                             (data-confirm "Unpin all stale entries?"))
                      (button (@ (type "submit") (class "linkish danger")
-                                (disabled ,(if (= stale-n 0) #t #f)))
+                                (disabled ,(= stale-n 0)))
                        ,(string-append "remove all stale ("
                                        (number->string stale-n) ")")))
                    " "
@@ -1282,7 +1259,7 @@
                               "Unpin all currently displayed entries?"))
                      ,@hidden-filters
                      (button (@ (type "submit") (class "linkish danger")
-                                (disabled ,(if (null? entries) #t #f)))
+                                (disabled ,(null? entries)))
                        ,(string-append "remove currently displayed ("
                                        (number->string (length entries)) ")")))))
                  (input (@ (type "checkbox") (id "pinned-add-toggle")
@@ -1474,22 +1451,12 @@
       ;; lands on the same view they came from. Defined up front because
       ;; internal definitions must precede all expressions in a body.
       (define (pinned-redirect form)
-        (let* ((parts '())
-               (add!  (lambda (k v)
-                        (when (and v (not (string=? v "")))
-                          (set! parts
-                                (cons (string-append (percent-encode k) "="
-                                                     (percent-encode v))
-                                      parts))))))
-          (add! "q"     (form-ref form "q"     ""))
-          (add! "cat"   (form-ref form "cat"   ""))
-          (add! "feed"  (form-ref form "feed"  ""))
-          (add! "since" (form-ref form "since" ""))
-          (add! "until" (form-ref form "until" ""))
-          (add! "stale" (form-ref form "stale" ""))
-          (let ((qs (string-join (reverse parts) "&")))
-            (cond ((string=? qs "") "/feeds/pinned")
-                  (else (string-append "/feeds/pinned?" qs))))))
+        (pinned-url (cons "q"     (form-ref form "q"     ""))
+                    (cons "cat"   (form-ref form "cat"   ""))
+                    (cons "feed"  (form-ref form "feed"  ""))
+                    (cons "since" (form-ref form "since" ""))
+                    (cons "until" (form-ref form "until" ""))
+                    (cons "stale" (form-ref form "stale" ""))))
 
       (router-add! router "GET" "/feeds"
         (require-auth auth
@@ -1498,8 +1465,8 @@
                    (cat (param-or req params "cat" ""))
                    (all (param-or req params "all" "")))
               (render-feeds-page req auth cfg
-                                 (cond ((string=? q "") #f) (else q))
-                                 (cond ((string=? cat "") #f) (else cat))
+                                 (non-empty-or-false q)
+                                 (non-empty-or-false cat)
                                  (string=? all "1"))))))
 
       (router-add! router "POST" "/feeds/entry/:id/read"
@@ -1523,7 +1490,7 @@
           (lambda (req params)
             (let* ((form (parse-www-form (or (http-request-body req) "")))
                    (cat  (form-ref form "cat" "")))
-              (mark-all-read! cfg (cond ((string=? cat "") #f) (else cat)))
+              (mark-all-read! cfg (non-empty-or-false cat))
               ;; Always redirect to the unfiltered view: the category the
               ;; user just emptied has nothing left to show, so keeping
               ;; the filter would land them on an empty page.
@@ -1538,7 +1505,7 @@
                    (days (or (string->number (form-ref form "days" "2")) 2)))
               (when (and (integer? days) (> days 0))
                 (mark-older-than! cfg
-                                  (cond ((string=? cat "") #f) (else cat))
+                                  (non-empty-or-false cat)
                                   days))
               (make-http-response 302
                 (list (cons "Location"
@@ -1563,8 +1530,8 @@
                                   (cond ((string=? q "")     #f) (else q))
                                   (cond ((string=? cat "")   #f) (else cat))
                                   (cond ((string=? feed "")  #f) (else feed))
-                                  (cond ((string=? since "") #f) (else since))
-                                  (cond ((string=? until "") #f) (else until))
+                                  (non-empty-or-false since)
+                                  (non-empty-or-false until)
                                   (string=? stale "1")
                                   msg)))))
 
@@ -1628,8 +1595,8 @@
                             (cond ((string=? q "")     #f) (else q))
                             (cond ((string=? cat "")   #f) (else cat))
                             (cond ((string=? feed "")  #f) (else feed))
-                            (cond ((string=? since "") #f) (else since))
-                            (cond ((string=? until "") #f) (else until))
+                            (non-empty-or-false since)
+                            (non-empty-or-false until)
                             (string=? stale "1"))))
               (unpin-by-ids! cfg ids)
               (make-http-response 302

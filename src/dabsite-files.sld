@@ -17,6 +17,7 @@
           (scm uri)
           (scm log)
           (dabsite db)
+          (dabsite util)
           (dabsite auth)
           (dabsite views))
   (export install-files-routes!
@@ -40,29 +41,7 @@
 
     ;; ---- mime helpers ----
 
-    (define (mime-from-name name)
-      (let ((lower (string-downcase name)))
-        (cond
-          ((string-suffix? ".html" lower) "text/html; charset=utf-8")
-          ((string-suffix? ".htm"  lower) "text/html; charset=utf-8")
-          ((string-suffix? ".css"  lower) "text/css; charset=utf-8")
-          ((string-suffix? ".js"   lower) "application/javascript; charset=utf-8")
-          ((string-suffix? ".json" lower) "application/json; charset=utf-8")
-          ((string-suffix? ".svg"  lower) "image/svg+xml")
-          ((string-suffix? ".png"  lower) "image/png")
-          ((string-suffix? ".jpg"  lower) "image/jpeg")
-          ((string-suffix? ".jpeg" lower) "image/jpeg")
-          ((string-suffix? ".gif"  lower) "image/gif")
-          ((string-suffix? ".webp" lower) "image/webp")
-          ((string-suffix? ".avif" lower) "image/avif")
-          ((string-suffix? ".ico"  lower) "image/x-icon")
-          ((string-suffix? ".pdf"  lower) "application/pdf")
-          ((string-suffix? ".txt"  lower) "text/plain; charset=utf-8")
-          ((string-suffix? ".md"   lower) "text/markdown; charset=utf-8")
-          ((string-suffix? ".mp3"  lower) "audio/mpeg")
-          ((string-suffix? ".mp4"  lower) "video/mp4")
-          ((string-suffix? ".zip"  lower) "application/zip")
-          (else "application/octet-stream"))))
+    (define mime-from-name mime-from-path)
 
     (define (image-mime? mime)
       (and (string? mime) (string-prefix? "image/" mime)))
@@ -81,15 +60,14 @@
       ;; Strip any CR/LF/NUL the upload may have placed in the mime type
       ;; (defence in depth — the HTTP server now sanitises too).
       (let ((clean (header-clean (or mime ""))))
-        (cond
-          ((string=? clean "") (mime-from-name (or name "")))
-          (else clean))))
+        (if (string=? clean "")
+            (mime-from-name (or name ""))
+            clean)))
 
     (define (content-disposition mime name)
       ;; Always include a filename for browser save-as. Inline only for
       ;; the allowlist; everything else forces a download.
-      (let* ((disp (cond ((inline-safe-mime? mime) "inline")
-                         (else "attachment")))
+      (let* ((disp (if (inline-safe-mime? mime) "inline" "attachment"))
              (clean-name (header-clean (or name ""))))
         (string-append disp
                        "; filename=\""
@@ -193,7 +171,7 @@
       (string-append files-dir "/" sha))
 
     (define (ensure-files-dir! files-dir)
-      (when (not (directory-exists? files-dir))
+      (unless (directory-exists? files-dir)
         (make-directory files-dir)))
 
     (define (write-blob! files-dir sha bv)
@@ -223,8 +201,9 @@
                       (pg-query c
                         "SELECT COUNT(*)::text FROM files WHERE sha256 = $1"
                         sha))))))
-        (cond ((pair? rs) (string->number (vector-ref (car rs) 0)))
-              (else 0))))
+        (if (pair? rs)
+            (string->number (vector-ref (car rs) 0))
+            0)))
 
     ;; ---- DB ----
 
@@ -232,7 +211,7 @@
       (let ((where (list "1=1"))
             (params '())
             (n 0))
-        (when (and (string? q) (> (string-length (string-trim-both q)) 0))
+        (when (non-empty-trimmed? q)
           (set! n (+ n 1))
           (let ((p (string-append "$" (number->string n))))
             (set! where
@@ -263,7 +242,7 @@
                     "       sha256, visibility, note "
                     "FROM files WHERE id = $1")
                   (list id))))
-        (cond ((pair? rs) (car rs)) (else #f))))
+        (and (pair? rs) (car rs))))
 
     (define (find-file-by-public-name cfg name)
       (let ((rs (alist-rows cfg
@@ -273,7 +252,7 @@
                     "FROM files WHERE visibility = 'public' AND name = $1 "
                     "LIMIT 1")
                   (list name))))
-        (cond ((pair? rs) (car rs)) (else #f))))
+        (and (pair? rs) (car rs))))
 
     (define (insert-file! cfg name mime size sha vis note)
       (with-db cfg
@@ -298,21 +277,6 @@
     (define (update-note! cfg id note)
       (exec cfg "UPDATE files SET note = $1 WHERE id = $2" (list note id)))
 
-    ;; ---- DB helpers ----
-    (define (alist-rows cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (pg-result->alist-list
-              (cond ((null? params) (pg-query c sql))
-                    (else (pg-query c (pg-format-sql sql params)))))))))
-    (define (exec cfg sql . maybe-params)
-      (let ((params (if (null? maybe-params) '() (car maybe-params))))
-        (with-db cfg
-          (lambda (c)
-            (cond ((null? params) (pg-exec c sql))
-                  (else (pg-exec c (pg-format-sql sql params))))))))
-
     ;; ---- formatting ----
 
     (define (format-size bytes)
@@ -326,8 +290,6 @@
            (string-append (number->string (inexact rounded)) " MB")))))
 
     ;; ---- views ----
-
-    (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
     (define (upload-form-sxml err)
       `(form (@ (method "post") (action "/files")
@@ -356,10 +318,10 @@
          (select (@ (name "vis"))
            (option (@ (value "")) "all")
            (option (@ (value "public")
-                      (selected ,(if (equal? vis "public") #t #f)))
+                      (selected ,(equal? vis "public")))
                    "public")
            (option (@ (value "private")
-                      (selected ,(if (equal? vis "private") #t #f)))
+                      (selected ,(equal? vis "private")))
                    "private"))
          (button (@ (type "submit")) "Apply")))
 
@@ -453,8 +415,9 @@
 
     (define (param-or req name default)
       (let ((p (assoc name (url-query-params (http-request-url req)))))
-        (cond ((and p (string? (cdr p))) (percent-decode (cdr p)))
-              (else default))))
+        (if (and p (string? (cdr p)))
+            (percent-decode (cdr p))
+            default)))
 
     (define (find-part parts name)
       (let loop ((ps parts))
@@ -467,15 +430,14 @@
       ;; Decode the named part's body bytevector as UTF-8 text. Returns
       ;; #f if the part is missing.
       (let ((p (find-part parts name)))
-        (cond (p (bv->utf8-string (part-ref p 'body)))
-              (else #f))))
+        (and p (bv->utf8-string (part-ref p 'body)))))
 
     ;; ---- upload pipeline (broken into stages to keep nesting shallow) ----
 
     (define (do-upload-store! cfg files-dir safe-name mime data note public?)
       (let* ((size (bytevector-length data))
              (sha  (sha256-hex data))
-             (vis  (cond (public? "public") (else "private"))))
+             (vis  (if public? "public" "private")))
         (guard
             (exn
              (#t
@@ -499,22 +461,18 @@
 
     (define (do-upload-parsed cfg files-dir file-part name-override note public?)
       (let* ((raw-name (or (part-ref file-part 'filename) ""))
-             (chosen   (cond ((not (string=? name-override ""))
-                              name-override)
-                             (else raw-name)))
+             (chosen   (if (string=? name-override "") raw-name name-override))
              (safe (safe-public-name chosen)))
-        (cond
-          ((not safe) (render-error 400 "Invalid filename."))
-          (else
-           (let* ((mime-hdr (part-ref file-part 'content-type))
-                  (mime     (cond
-                              ((and mime-hdr (not (string=? mime-hdr "")))
-                               mime-hdr)
-                              (else (mime-from-name safe))))
+        (if (not safe)
+            (render-error 400 "Invalid filename.")
+            (let* ((mime-hdr (part-ref file-part 'content-type))
+                  (mime     (if (non-empty-string? mime-hdr)
+                                mime-hdr
+                                (mime-from-name safe)))
                   ;; The bytevector parser returns the part body as a
                   ;; bytevector already, so no per-byte conversion loop.
                   (data (part-ref file-part 'body)))
-             (do-upload-store! cfg files-dir safe mime data note public?))))))
+             (do-upload-store! cfg files-dir safe mime data note public?)))))
 
     (define (handle-upload cfg files-dir req)
       (let* ((ct       (http-request-header req "Content-Type"))
@@ -556,8 +514,8 @@
             (let ((q   (param-or req "q" ""))
                   (vis (param-or req "vis" "")))
               (render-main req auth cfg
-                           (cond ((string=? q "") #f) (else q))
-                           (cond ((string=? vis "") #f) (else vis))
+                           (non-empty-or-false q)
+                           (non-empty-or-false vis)
                            #f)))))
 
       ;; ----- upload -----
