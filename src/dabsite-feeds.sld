@@ -59,7 +59,7 @@
 
     (define (build-filter q category show-all?)
       ;; Returns a SQL WHERE clause (without leading WHERE) and ORDER BY.
-      (let ((clauses (list "1=1")))
+      (let ((clauses (list "fe.deleted_at IS NULL")))
         (when (not show-all?)
           (set! clauses (cons "fe.read_at IS NULL" clauses)))
         (when (and category (not (string=? category "")))
@@ -141,7 +141,7 @@
                        "SELECT f.category AS category, "
                        "       COUNT(*)::text AS n "
                        "FROM feed_entries fe JOIN feeds f ON f.id = fe.feed_id "
-                       "WHERE fe.read_at IS NULL "
+                       "WHERE fe.read_at IS NULL AND fe.deleted_at IS NULL "
                        "GROUP BY f.category"))))
         (map (lambda (r)
                (cons (cdr (assoc "category" r))
@@ -151,11 +151,17 @@
     ;; --- mark read/unread ---
 
     (define (mark-entry-read! cfg id)
-      (exec cfg "UPDATE feed_entries SET read_at = now() WHERE id = $1"
+      (exec cfg
+            (string-append
+              "UPDATE feed_entries SET read_at = now() "
+              "WHERE id = $1 AND deleted_at IS NULL")
             (list id)))
 
     (define (mark-entry-unread! cfg id)
-      (exec cfg "UPDATE feed_entries SET read_at = NULL WHERE id = $1"
+      (exec cfg
+            (string-append
+              "UPDATE feed_entries SET read_at = NULL "
+              "WHERE id = $1 AND deleted_at IS NULL")
             (list id)))
 
     (define (mark-all-read! cfg category)
@@ -164,12 +170,15 @@
          (exec cfg
                (string-append
                  "UPDATE feed_entries SET read_at = now() "
-                 "WHERE read_at IS NULL AND feed_id IN "
+                 "WHERE read_at IS NULL AND deleted_at IS NULL "
+                 "AND feed_id IN "
                  "(SELECT id FROM feeds WHERE category = $1)")
                (list category)))
         (else
          (exec cfg
-               "UPDATE feed_entries SET read_at = now() WHERE read_at IS NULL"))))
+               (string-append
+                 "UPDATE feed_entries SET read_at = now() "
+                 "WHERE read_at IS NULL AND deleted_at IS NULL")))))
 
     (define (mark-older-than! cfg category days)
       ;; Marks unread entries older than `days` days as read. The cutoff
@@ -180,7 +189,7 @@
          (exec cfg
                (string-append
                  "UPDATE feed_entries SET read_at = now() "
-                 "WHERE read_at IS NULL "
+                 "WHERE read_at IS NULL AND deleted_at IS NULL "
                  "AND feed_id IN (SELECT id FROM feeds WHERE category = $1) "
                  "AND fetched_at < now() - make_interval(days => $2)")
                (list category days)))
@@ -188,7 +197,7 @@
          (exec cfg
                (string-append
                  "UPDATE feed_entries SET read_at = now() "
-                 "WHERE read_at IS NULL "
+                 "WHERE read_at IS NULL AND deleted_at IS NULL "
                  "AND fetched_at < now() - make_interval(days => $1)")
                (list days)))))
 
@@ -197,18 +206,36 @@
     ;; feed can't crowd out an unlabelled quiet one.
     (define read-entries-per-label-cap 100)
 
+    ;; Soft-prune: mark read entries beyond the per-label cap as deleted.
+    ;; The rows stay in the table so the (feed_id, guid) unique row and
+    ;; the title_key recency scan can still suppress re-inserts when the
+    ;; same item shows up in a later refresh.
     (define (prune-read-entries! cfg)
       (exec cfg
         (string-append
-          "DELETE FROM feed_entries WHERE id IN ("
+          "UPDATE feed_entries SET deleted_at = now() WHERE id IN ("
           "  SELECT id FROM ("
           "    SELECT fe.id, row_number() OVER ("
           "      PARTITION BY COALESCE(NULLIF(f.label, ''), "
           "                            'feed#' || f.id::text) "
           "      ORDER BY fe.read_at DESC, fe.id DESC) AS rn "
           "    FROM feed_entries fe JOIN feeds f ON f.id = fe.feed_id "
-          "    WHERE fe.read_at IS NOT NULL"
+          "    WHERE fe.read_at IS NOT NULL AND fe.deleted_at IS NULL"
           "  ) t WHERE rn > " (number->string read-entries-per-label-cap) ")")))
+
+    ;; Second-stage: physically remove rows whose deleted_at is past the
+    ;; dedup window plus a small safety margin (see dedup-window-days
+    ;; below). After that point the row can no longer suppress a
+    ;; republish anyway.
+    (define hard-prune-after-days 40)
+
+    (define (hard-prune-entries! cfg)
+      (exec cfg
+            (string-append
+              "DELETE FROM feed_entries "
+              "WHERE deleted_at IS NOT NULL "
+              "AND deleted_at < now() - make_interval(days => $1)")
+            (list hard-prune-after-days)))
 
     (define (update-category-order! cfg name sort-order)
       ;; Upserts a category row. Used by the admin UI to reorder.
@@ -466,6 +493,24 @@
                  (string-join rows-sql ", ")
                  " ON CONFLICT (feed_id, guid) DO NOTHING")))))))
 
+    ;; Unix-seconds timestamp of the last hard-prune run, or #f if not
+    ;; yet run this process. Read and written only from the scheduler
+    ;; thread, so set! is safe here.
+    (define last-hard-prune-time #f)
+    (define hard-prune-interval-seconds 3600)
+
+    (define (maybe-hard-prune! cfg)
+      (let ((now-s (exact (round (current-second)))))
+        (cond
+          ((or (not last-hard-prune-time)
+               (>= (- now-s last-hard-prune-time)
+                   hard-prune-interval-seconds))
+           (set! last-hard-prune-time now-s)
+           (guard (exn (#t (log-error "feeds"
+                             "hard-prune-entries! failed; continuing")))
+             (hard-prune-entries! cfg)))
+          (else #t))))
+
     (define (tick! cfg)
       (let ((due (list-due-feeds cfg)))
         (for-each
@@ -498,7 +543,8 @@
           due)
         (guard (exn (#t (log-error "feeds"
                           "prune-read-entries! failed; continuing")))
-          (prune-read-entries! cfg))))
+          (prune-read-entries! cfg))
+        (maybe-hard-prune! cfg)))
 
     (define scheduler-tick-seconds 30)
 
@@ -905,12 +951,11 @@
             (let* ((form (parse-www-form (or (http-request-body req) "")))
                    (cat  (form-ref form "cat" "")))
               (mark-all-read! cfg (cond ((string=? cat "") #f) (else cat)))
+              ;; Always redirect to the unfiltered view: the category the
+              ;; user just emptied has nothing left to show, so keeping
+              ;; the filter would land them on an empty page.
               (make-http-response 302
-                (list (cons "Location"
-                            (cond ((string=? cat "") "/feeds")
-                                  (else (string-append "/feeds?cat="
-                                                       (percent-encode cat))))))
-                "")))))
+                (list (cons "Location" "/feeds")) "")))))
 
       (router-add! router "POST" "/feeds/mark-older"
         (require-auth auth
