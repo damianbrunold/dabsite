@@ -13,6 +13,7 @@
           (scm net http route)
           (scm net http forms)
           (scm html)
+          (scm html builder)
           (scm uri)
           (scm log)
           (scm duration)
@@ -517,7 +518,10 @@
 
     (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
-    (define (render-feed-entry out row)
+    (define (feed-entry-sxml row)
+      ;; Returns the SXML for one feed entry. The tooltip combines the
+      ;; publication date and the (truncated, plain-text) summary so
+      ;; hovering surfaces both without consuming column width.
       (let* ((id    (row-field row "id"))
              (label (row-field row "label"))
              (cat   (row-field row "category"))
@@ -526,47 +530,34 @@
              (sumr  (strip-html-tags (row-field row "summary")))
              (pub   (row-field row "published"))
              (read  (row-field row "read"))
-             ;; The link tooltip carries both the publication date and the
-             ;; (truncated, plain-text) summary so hovering the entry
-             ;; surfaces both without consuming column width.
+             (read? (string=? read "yes"))
              (tip   (cond
                       ((and (not (string=? pub  ""))
                             (not (string=? sumr "")))
                        (string-append pub " — " sumr))
                       ((not (string=? pub  "")) pub)
                       (else sumr))))
-        (write-string "<li class=\"feed-entry" out)
-        (when (string=? read "yes") (write-string " is-read" out))
-        (write-string "\" data-id=\"" out)
-        (write-string (html-attr-escape id) out)
-        (write-string "\" data-cat=\"" out)
-        (write-string (html-attr-escape cat) out)
-        (write-string "\">" out)
-
-        (write-string "<form method=\"post\" action=\"/feeds/entry/" out)
-        (write-string (html-attr-escape id) out)
-        (write-string "/" out)
-        (write-string (if (string=? read "yes") "unread" "read") out)
-        (write-string "\" class=\"mark\">" out)
-        (write-string "<button type=\"submit\" title=\"" out)
-        (write-string (if (string=? read "yes") "mark unread" "mark read") out)
-        (write-string "\">" out)
-        (write-string (if (string=? read "yes") "↩" "✓") out)
-        (write-string "</button></form>" out)
-
-        (write-string "<a class=\"entry-link\" href=\"" out)
-        (write-string (html-attr-escape link) out)
-        (write-string "\" target=\"_blank\" rel=\"noopener\" title=\"" out)
-        (write-string (html-attr-escape tip) out)
-        (write-string "\">" out)
-        (when (not (string=? label ""))
-          (write-string "<span class=\"label\">" out)
-          (write-string (html-escape label) out)
-          (write-string "</span> " out))
-        (write-string (html-escape title) out)
-        (write-string "</a>" out)
-
-        (write-string "</li>" out)))
+        `(li (@ (class ,(string-append "feed-entry"
+                                       (if read? " is-read" "")))
+                (data-id ,id)
+                (data-cat ,cat))
+             (form (@ (method "post")
+                      (action ,(string-append "/feeds/entry/" id "/"
+                                              (if read? "unread" "read")))
+                      (class "mark"))
+                (button (@ (type "submit")
+                           (title ,(if read? "mark unread" "mark read")))
+                  ,(if read? "↩" "✓")))
+             (a (@ (class "entry-link")
+                   (href ,link)
+                   (target "_blank")
+                   (rel "noopener")
+                   (title ,tip))
+                ,(if (string=? label "")
+                     ""
+                     `(span (@ (class "label")) ,label))
+                ,(if (string=? label "") "" " ")
+                ,title))))
 
     (define (entries-by-category entries)
       ;; Returns alist (category . entries-in-order).
@@ -625,27 +616,21 @@
                                 (cons (cons (car q) (cdr queue)) next)
                                 (cons (car queue) acc))))))))))))))
 
-    (define (render-category-section out cat-entries category)
+    (define (category-section-sxml cat-entries category)
       (let ((cat (car cat-entries))
             (es  (cdr cat-entries)))
-        (write-string "<section class=\"feed-cat\" data-cat=\"" out)
-        (write-string (html-attr-escape cat) out)
-        (write-string "\">" out)
-        (write-string "<header><h2>" out)
-        (write-string (html-escape cat) out)
-        (write-string "</h2>" out)
-        (write-string "<form method=\"post\" action=\"/feeds/mark-all-read\" class=\"inline\">" out)
-        (write-string "<input type=\"hidden\" name=\"cat\" value=\"" out)
-        (write-string (html-attr-escape cat) out)
-        (write-string "\">" out)
-        (write-string (string-append
-                        "<button type=\"submit\" class=\"linkish\" "
-                        "title=\"mark all read in this category\">mark all read</button>")
-                      out)
-        (write-string "</form></header>" out)
-        (write-string "<ul class=\"feed-entries\">" out)
-        (for-each (lambda (e) (render-feed-entry out e)) es)
-        (write-string "</ul></section>" out)))
+        `(section (@ (class "feed-cat") (data-cat ,cat))
+           (header
+             (h2 ,cat)
+             (form (@ (method "post")
+                      (action "/feeds/mark-all-read")
+                      (class "inline"))
+               (input (@ (type "hidden") (name "cat") (value ,cat)))
+               (button (@ (type "submit") (class "linkish")
+                          (title "mark all read in this category"))
+                 "mark all read")))
+           (ul (@ (class "feed-entries"))
+             ,@(map feed-entry-sxml es)))))
 
     (define (sort-grouped-by-cats grouped cats)
       ;; cats is the list of category names in display order; grouped is
@@ -661,6 +646,15 @@
                               grouped)))
         (append in-cats extras)))
 
+    (define (category-option-sxml unread current-category c)
+      (let* ((n (cdr (or (assoc c unread) (cons "" 0))))
+             (label (cond ((> n 0)
+                           (string-append c " (" (number->string n) ")"))
+                          (else c))))
+        `(option (@ (value ,c)
+                    (selected ,(and current-category (string=? current-category c) #t)))
+                 ,label)))
+
     (define (render-feeds-page req auth cfg q category show-all?)
       (let* ((entries (list-entries cfg q category show-all?))
              (cats    (list-categories cfg))
@@ -672,76 +666,58 @@
                            by-cat))
              (grouped (sort-grouped-by-cats by-cat cats))
              (unread  (count-unread cfg))
-             (out     (open-output-string)))
-        (write-string "<header class=\"feeds-head\">" out)
-        (write-string "<h1>Feeds" out)
-        (cond
-          (show-all? (write-string " <span class=\"qual\">archive</span>" out))
-          (else      (write-string " <span class=\"qual\">unread</span>" out)))
-        (write-string "</h1>" out)
-
-        ;; Filter form: search + category select + show-archive + admin link.
-        (write-string "<form method=\"get\" action=\"/feeds\" class=\"feed-filters\">" out)
-        (write-string "<input type=\"search\" name=\"q\" placeholder=\"search archive\" value=\"" out)
-        (write-string (html-attr-escape (or q "")) out)
-        (write-string "\">" out)
-        (write-string "<select name=\"cat\">" out)
-        (write-string "<option value=\"\">all categories</option>" out)
-        (for-each
-          (lambda (c)
-            (write-string "<option value=\"" out)
-            (write-string (html-attr-escape c) out)
-            (write-string "\"" out)
-            (when (and category (string=? category c))
-              (write-string " selected" out))
-            (write-string ">" out)
-            (write-string (html-escape c) out)
-            (let ((n (cdr (or (assoc c unread) (cons "" 0)))))
-              (when (> n 0)
-                (write-string " (" out) (write-string (number->string n) out)
-                (write-string ")" out)))
-            (write-string "</option>" out))
-          cats)
-        (write-string "</select>" out)
-        (write-string "<label class=\"checkbox\"><input type=\"checkbox\" name=\"all\" value=\"1\"" out)
-        (when show-all? (write-string " checked" out))
-        (write-string ">show archive</label>" out)
-        (write-string "<button type=\"submit\">Apply</button>" out)
-        (write-string "<a class=\"admin-link\" href=\"/feeds/admin\">admin</a>" out)
-        (write-string "</form>" out)
-
-        ;; Mark older-than form. Carries the active category filter so a
-        ;; user looking at e.g. only Tech can sweep just Tech.
-        (write-string (string-append
-                        "<form method=\"post\" action=\"/feeds/mark-older\" "
-                        "class=\"feed-mark-older\">")
-                      out)
-        (when category
-          (write-string "<input type=\"hidden\" name=\"cat\" value=\"" out)
-          (write-string (html-attr-escape category) out)
-          (write-string "\">" out))
-        (write-string "<label>mark read older than " out)
-        (write-string (string-append
-                        "<input type=\"number\" name=\"days\" min=\"1\" "
-                        "value=\"2\" inputmode=\"numeric\"> days")
-                      out)
-        (write-string "</label><button type=\"submit\" class=\"linkish\">go</button>" out)
-        (write-string "</form>" out)
-        (write-string "</header>" out)
-
-        (cond
-          ((null? grouped)
-           (write-string "<p class=\"empty\">Nothing to read." out)
-           (when (not show-all?)
-             (write-string " <a href=\"/feeds?all=1\">Show archive</a>." out))
-           (write-string "</p>" out))
-          (else
-           (write-string "<div class=\"feed-grid\">" out)
-           (for-each
-             (lambda (ce) (render-category-section out ce category))
-             grouped)
-           (write-string "</div>" out)))
-
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Feeds "
+                       (span (@ (class "qual"))
+                             ,(if show-all? "archive" "unread")))
+                   ;; Filter form: search + category select +
+                   ;; show-archive + admin link.
+                   (form (@ (method "get") (action "/feeds")
+                            (class "feed-filters"))
+                     (input (@ (type "search") (name "q")
+                               (placeholder "search archive")
+                               (value ,(or q ""))))
+                     (select (@ (name "cat"))
+                       (option (@ (value "")) "all categories")
+                       ,@(map (lambda (c)
+                                (category-option-sxml unread category c))
+                              cats))
+                     (label (@ (class "checkbox"))
+                       (input (@ (type "checkbox") (name "all") (value "1")
+                                 (checked ,(if show-all? #t #f))))
+                       "show archive")
+                     (button (@ (type "submit")) "Apply")
+                     (a (@ (class "admin-link") (href "/feeds/admin"))
+                        "admin"))
+                   ;; Mark older-than form. Carries the active category
+                   ;; filter so a user looking at e.g. only Tech can
+                   ;; sweep just Tech.
+                   (form (@ (method "post") (action "/feeds/mark-older")
+                            (class "feed-mark-older"))
+                     ,(if category
+                          `(input (@ (type "hidden") (name "cat")
+                                     (value ,category)))
+                          "")
+                     (label "mark read older than "
+                       (input (@ (type "number") (name "days") (min "1")
+                                 (value "2") (inputmode "numeric")))
+                       " days")
+                     (button (@ (type "submit") (class "linkish")) "go")))
+                 ,(cond
+                    ((null? grouped)
+                     `(p (@ (class "empty"))
+                         "Nothing to read."
+                         ,@(if show-all?
+                               '()
+                               `(" " (a (@ (href "/feeds?all=1"))
+                                        "Show archive")
+                                 "."))))
+                    (else
+                     `(div (@ (class "feed-grid"))
+                           ,@(map (lambda (ce)
+                                    (category-section-sxml ce category))
+                                  grouped)))))))
         (html-response
           (render-page req auth
                        (list (cons 'title  "Feeds")
@@ -750,7 +726,7 @@
                                    (cond
                                      (category "feeds-page feeds-page-single")
                                      (else     "feeds-page"))))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     (define (render-admin-page req auth cfg)
       (let ((feeds      (list-feeds cfg))
