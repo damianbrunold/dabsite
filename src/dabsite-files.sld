@@ -13,7 +13,7 @@
           (scm net http response)
           (scm net http route)
           (scm net http multipart)
-          (scm html)
+          (scm html builder)
           (scm uri)
           (scm log)
           (dabsite db)
@@ -320,114 +320,99 @@
 
     (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
-    (define (render-upload-form out err)
-      (out! out "<form method=\"post\" action=\"/files\" "
-                "enctype=\"multipart/form-data\" class=\"feed-new files-add\">"
-                "<h2>Upload</h2>")
-      (when err
-        (out! out "<p class=\"error\">" (html-escape err) "</p>"))
-      (out! out "<label class=\"files-pick\">File"
-                "<input type=\"file\" name=\"file\" required>"
-                "</label>"
-                "<label>Name (optional, public files must be unique)"
-                "<input type=\"text\" name=\"name\" "
-                "placeholder=\"defaults to uploaded filename\"></label>"
-                "<label>Note (optional)"
-                "<input type=\"text\" name=\"note\" "
-                "placeholder=\"description\"></label>"
-                "<label class=\"files-public\">"
-                "<input type=\"checkbox\" name=\"public\" value=\"1\"> "
-                "Make public (served at /f/&lt;name&gt;)</label>"
-                "<button type=\"submit\">Upload</button>"
-                "</form>"))
+    (define (upload-form-sxml err)
+      `(form (@ (method "post") (action "/files")
+                (enctype "multipart/form-data")
+                (class "feed-new files-add"))
+         (h2 "Upload")
+         ,@(if err `((p (@ (class "error")) ,err)) '())
+         (label (@ (class "files-pick")) "File"
+           (input (@ (type "file") (name "file") (required #t))))
+         (label "Name (optional, public files must be unique)"
+           (input (@ (type "text") (name "name")
+                     (placeholder "defaults to uploaded filename"))))
+         (label "Note (optional)"
+           (input (@ (type "text") (name "note")
+                     (placeholder "description"))))
+         (label (@ (class "files-public"))
+           (input (@ (type "checkbox") (name "public") (value "1")))
+           " Make public (served at /f/" ,(raw "&lt;name&gt;") ")")
+         (button (@ (type "submit")) "Upload")))
 
-    (define (render-filter-form out q vis)
-      (out! out "<form method=\"get\" action=\"/files\" class=\"feed-filters\">"
-                "<input type=\"search\" name=\"q\" placeholder=\"search name + note\" value=\""
-                (html-attr-escape (or q "")) "\">"
-                "<select name=\"vis\">"
-                "<option value=\"\">all</option>"
-                "<option value=\"public\""
-                (cond ((equal? vis "public") " selected") (else ""))
-                ">public</option>"
-                "<option value=\"private\""
-                (cond ((equal? vis "private") " selected") (else ""))
-                ">private</option>"
-                "</select>"
-                "<button type=\"submit\">Apply</button>"
-                "</form>"))
+    (define (filter-form-sxml q vis)
+      `(form (@ (method "get") (action "/files") (class "feed-filters"))
+         (input (@ (type "search") (name "q")
+                   (placeholder "search name + note")
+                   (value ,(or q ""))))
+         (select (@ (name "vis"))
+           (option (@ (value "")) "all")
+           (option (@ (value "public")
+                      (selected ,(if (equal? vis "public") #t #f)))
+                   "public")
+           (option (@ (value "private")
+                      (selected ,(if (equal? vis "private") #t #f)))
+                   "private"))
+         (button (@ (type "submit")) "Apply")))
 
-    (define (render-files-list out files)
-      (cond
-        ((null? files)
-         (out! out "<p class=\"empty\">No files yet.</p>"))
-        (else
-         (out! out "<ul class=\"files-list\">")
-         (for-each
-           (lambda (f)
-             (let* ((id    (row-field f "id"))
-                    (name  (row-field f "name"))
-                    (mime  (row-field f "mime"))
-                    (size  (string->number (row-field f "size")))
-                    (vis   (row-field f "visibility"))
-                    (note  (row-field f "note"))
-                    (created (row-field f "created"))
-                    (public? (string=? vis "public")))
-               (out! out "<li class=\"file"
-                         (cond (public? " public") (else " private")) "\">"
-                         "<div class=\"thumb\">")
+    (define (file-row-sxml f)
+      (let* ((id    (row-field f "id"))
+             (name  (row-field f "name"))
+             (mime  (row-field f "mime"))
+             (size  (string->number (row-field f "size")))
+             (vis   (row-field f "visibility"))
+             (note  (row-field f "note"))
+             (created (row-field f "created"))
+             (public? (string=? vis "public"))
+             (thumb
                (cond
                  ((and public? (image-mime? mime))
-                  (out! out "<img src=\"/f/"
-                            (html-attr-escape name)
-                            "\" alt=\"\" loading=\"lazy\">"))
+                  `(img (@ (src ,(string-append "/f/" name))
+                           (alt "") (loading "lazy"))))
                  ((image-mime? mime)
-                  (out! out "<img src=\"/files/"
-                            (html-attr-escape id)
-                            "\" alt=\"\" loading=\"lazy\">"))
+                  `(img (@ (src ,(string-append "/files/" id))
+                           (alt "") (loading "lazy"))))
                  (else
-                  (out! out "<span class=\"ext\">"
-                            (html-escape (mime-tag mime name))
-                            "</span>")))
-               (out! out "</div>"
-                         "<div class=\"meta\">"
-                         "<div class=\"name\">"
-                         (cond
-                           (public?
-                            (string-append
-                              "<a href=\"/f/" (html-attr-escape name)
-                              "\" target=\"_blank\" rel=\"noopener\">"
-                              (html-escape name) "</a>"))
-                           (else
-                            (string-append
-                              "<a href=\"/files/" (html-attr-escape id)
-                              "\">" (html-escape name) "</a>")))
-                         "</div>"
-                         "<div class=\"info\">"
-                         (cond (public? "<span class=\"badge open\">public</span>")
-                               (else    "<span class=\"badge closed\">private</span>"))
-                         " <span class=\"sz\">" (format-size (or size 0)) "</span>"
-                         " <span class=\"dt\">" (html-escape created) "</span>"
-                         "</div>")
-               (when (not (string=? note ""))
-                 (out! out "<div class=\"note\">" (html-escape note) "</div>"))
-               (out! out "<div class=\"acts\">"
-                         "<form method=\"post\" action=\"/files/"
-                         (html-attr-escape id)
-                         "/visibility\" class=\"inline\">"
-                         "<button class=\"linkish\">"
-                         (cond (public? "make private")
-                               (else    "make public"))
-                         "</button></form> "
-                         "<form method=\"post\" action=\"/files/"
-                         (html-attr-escape id)
-                         "/delete\" class=\"inline\" "
-                         "data-confirm=\"Delete this file?\">"
-                         "<button class=\"linkish danger\">delete</button>"
-                         "</form>"
-                         "</div></div></li>")))
-           files)
-         (out! out "</ul>"))))
+                  `(span (@ (class "ext"))
+                         ,(mime-tag mime name)))))
+             (name-link
+               (cond
+                 (public?
+                  `(a (@ (href ,(string-append "/f/" name))
+                         (target "_blank") (rel "noopener"))
+                      ,name))
+                 (else
+                  `(a (@ (href ,(string-append "/files/" id))) ,name)))))
+        `(li (@ (class ,(string-append "file"
+                                       (if public? " public" " private"))))
+           (div (@ (class "thumb")) ,thumb)
+           (div (@ (class "meta"))
+             (div (@ (class "name")) ,name-link)
+             (div (@ (class "info"))
+               (span (@ (class ,(if public? "badge open" "badge closed")))
+                     ,(if public? "public" "private"))
+               " " (span (@ (class "sz")) ,(format-size (or size 0)))
+               " " (span (@ (class "dt")) ,created))
+             ,@(if (string=? note "") '()
+                   `((div (@ (class "note")) ,note)))
+             (div (@ (class "acts"))
+               (form (@ (method "post")
+                        (action ,(string-append "/files/" id "/visibility"))
+                        (class "inline"))
+                 (button (@ (class "linkish"))
+                   ,(if public? "make private" "make public")))
+               " "
+               (form (@ (method "post")
+                        (action ,(string-append "/files/" id "/delete"))
+                        (class "inline")
+                        (data-confirm "Delete this file?"))
+                 (button (@ (class "linkish danger")) "delete")))))))
+
+    (define (files-list-sxml files)
+      (cond
+        ((null? files) `(p (@ (class "empty")) "No files yet."))
+        (else
+         `(ul (@ (class "files-list"))
+              ,@(map file-row-sxml files)))))
 
     (define (mime-tag mime name)
       ;; Short tag shown when there's no preview thumbnail.
@@ -442,18 +427,18 @@
                 (substring name (+ dot 1) (string-length name)))))))))
 
     (define (render-main req auth cfg q vis err)
-      (let ((files (list-files cfg q vis))
-            (out   (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Files</h1></header>")
-        (render-filter-form out q vis)
-        (render-upload-form out err)
-        (render-files-list out files)
+      (let* ((files (list-files cfg q vis))
+             (body
+               `((header (@ (class "feeds-head")) (h1 "Files"))
+                 ,(filter-form-sxml q vis)
+                 ,(upload-form-sxml err)
+                 ,(files-list-sxml files))))
         (html-response
           (render-page req auth
                        '((title  . "Files")
                          (active . files)
                          (body-class . "feeds-page"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     ;; ---- request helpers ----
 

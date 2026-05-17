@@ -728,175 +728,132 @@
                                      (else     "feeds-page"))))
                        (html->string body)))))
 
+    (define (cat-order-row-sxml c)
+      (let ((name  (row-field c "name"))
+            (order (row-field c "sort_order")))
+        `(tr (form (@ (method "post") (action "/feeds/admin/category-order"))
+               (td ,name
+                   (input (@ (type "hidden") (name "name") (value ,name))))
+               (td (input (@ (type "number") (name "sort_order")
+                             (value ,order) (min "0") (max "10000"))))
+               (td (button (@ (type "submit") (class "linkish")) "save"))))))
+
+    (define (skip-row-sxml sp)
+      (let ((sid  (row-field sp "id"))
+            (kind (row-field sp "kind"))
+            (pat  (row-field sp "pattern")))
+        `(tr (td ,kind)
+             (td ,pat)
+             (td (form (@ (method "post")
+                          (action ,(string-append "/feeds/admin/skip-pattern/"
+                                                  sid "/delete"))
+                          (class "inline"))
+                   (button (@ (type "submit") (class "linkish danger"))
+                     "remove"))))))
+
+    (define (feed-row-sxml f)
+      (let* ((id      (row-field f "id"))
+             (url     (row-field f "url"))
+             (title   (row-field f "title"))
+             (label   (row-field f "label"))
+             (cat     (row-field f "category"))
+             (refresh (row-field f "refresh_seconds"))
+             (refresh-int (or (string->number refresh) 0))
+             (pin     (row-field f "min_entries"))
+             (fails   (row-field f "failure_count"))
+             (enabled (row-field f "enabled"))
+             (last    (row-field f "last_fetched"))
+             (err     (row-field f "last_error"))
+             (base    (string-append "/feeds/admin/" id)))
+        `(tr (@ (class ,(if (string=? enabled "no") "disabled" #f)))
+           (td ,id) (td ,cat) (td ,label) (td ,title)
+           (td (@ (class "url")) ,url)
+           (td (form (@ (method "post")
+                        (action ,(string-append base "/refresh-interval"))
+                        (class "inline"))
+                 (input (@ (type "text") (name "refresh") (size "5")
+                           (value ,(format-duration refresh-int))))
+                 (button (@ (type "submit") (class "linkish")) "↵")))
+           (td (form (@ (method "post")
+                        (action ,(string-append base "/min-entries"))
+                        (class "inline"))
+                 (input (@ (type "number") (name "min_entries") (size "3")
+                           (min "0") (max "50") (value ,pin)))
+                 (button (@ (type "submit") (class "linkish")) "↵")))
+           (td ,last) (td ,fails) (td (@ (class "err")) ,err)
+           (td (@ (class "acts"))
+               (form (@ (method "post") (action ,(string-append base "/toggle"))
+                        (class "inline"))
+                 (button (@ (class "linkish"))
+                   ,(if (string=? enabled "yes") "disable" "enable")))
+               " "
+               (form (@ (method "post") (action ,(string-append base "/refresh"))
+                        (class "inline"))
+                 (button (@ (class "linkish")) "refresh now"))
+               " "
+               (form (@ (method "post") (action ,(string-append base "/delete"))
+                        (class "inline")
+                        (data-confirm "Delete this feed and all its entries?"))
+                 (button (@ (class "linkish danger")) "delete"))))))
+
     (define (render-admin-page req auth cfg)
-      (let ((feeds      (list-feeds cfg))
-            (cat-orders (list-category-orders cfg))
-            (skips      (list-skip-patterns cfg))
-            (out        (open-output-string)))
-        (write-string "<header class=\"feeds-head\"><h1>Feed admin</h1>" out)
-        (write-string "<a href=\"/feeds\">← back to feeds</a></header>" out)
-
-        ;; --- Add-feed form: refresh accepts duration strings like 1h ---
-        (write-string "<form method=\"post\" action=\"/feeds/admin\" class=\"feed-new\">" out)
-        (write-string "<h2>Add feed</h2>" out)
-        (write-string "<label>URL <input type=\"url\" name=\"url\" required></label>" out)
-        (write-string "<label>Title <input type=\"text\" name=\"title\" required></label>" out)
-        (write-string "<label>Label <input type=\"text\" name=\"label\" maxlength=\"8\"></label>" out)
-        (write-string "<label>Category <input type=\"text\" name=\"category\" value=\"misc\"></label>" out)
-        (write-string (string-append
-                        "<label>Refresh <input type=\"text\" name=\"refresh\" "
-                        "value=\"1h\" placeholder=\"30s, 10m, 1h, 1d\"></label>")
-                      out)
-        (write-string "<button type=\"submit\">Add</button>" out)
-        (write-string "</form>" out)
-
-        ;; --- Categories: edit sort order ---
-        (write-string "<section class=\"cat-orders\">" out)
-        (write-string "<h2>Categories</h2>" out)
-        (write-string "<table class=\"feed-table\">" out)
-        (write-string (string-append
-                        "<thead><tr><th>name</th><th>sort order</th>"
-                        "<th></th></tr></thead><tbody>")
-                      out)
-        (for-each
-          (lambda (c)
-            (let ((name  (row-field c "name"))
-                  (order (row-field c "sort_order")))
-              (write-string (string-append
-                              "<tr><form method=\"post\" "
-                              "action=\"/feeds/admin/category-order\">")
-                            out)
-              (write-string "<td>" out) (write-string (html-escape name) out)
-              (write-string "<input type=\"hidden\" name=\"name\" value=\"" out)
-              (write-string (html-attr-escape name) out)
-              (write-string "\"></td>" out)
-              (write-string (string-append
-                              "<td><input type=\"number\" name=\"sort_order\" "
-                              "value=\"")
-                            out)
-              (write-string (html-attr-escape order) out)
-              (write-string "\" min=\"0\" max=\"10000\"></td>" out)
-              (write-string (string-append
-                              "<td><button type=\"submit\" class=\"linkish\">save"
-                              "</button></td></form></tr>")
-                            out)))
-          cat-orders)
-        (write-string "</tbody></table></section>" out)
-
-        ;; --- Skip patterns ---
-        (write-string "<section class=\"skip-patterns\">" out)
-        (write-string "<h2>Skip patterns</h2>" out)
-        (write-string "<p class=\"hint\">Incoming entries whose title matches " out)
-        (write-string "any of these are silently dropped at fetch time.</p>" out)
-        (out! out "<form method=\"post\" action=\"/feeds/admin/skip-pattern\" "
-                  "class=\"skip-new inline\">")
-        (out! out "<select name=\"kind\">"
-                  "<option value=\"prefix\">prefix</option>"
-                  "<option value=\"contains\">contains</option>"
-                  "</select>")
-        (out! out "<input type=\"text\" name=\"pattern\" required "
-                  "placeholder=\"e.g. Anzeige\">")
-        (out! out "<button type=\"submit\">Add</button></form>"
-                  "<table class=\"feed-table\">"
-                  "<thead><tr><th>kind</th><th>pattern</th><th></th></tr>"
-                  "</thead><tbody>")
-        (for-each
-          (lambda (sp)
-            (let ((sid  (row-field sp "id"))
-                  (kind (row-field sp "kind"))
-                  (pat  (row-field sp "pattern")))
-              (write-string "<tr><td>" out)
-              (write-string (html-escape kind) out)
-              (write-string "</td><td>" out)
-              (write-string (html-escape pat)  out)
-              (write-string "</td><td><form method=\"post\" action=\"/feeds/admin/skip-pattern/" out)
-              (write-string (html-attr-escape sid) out)
-              (write-string "/delete\" class=\"inline\">" out)
-              (write-string "<button type=\"submit\" class=\"linkish danger\">remove</button>" out)
-              (write-string "</form></td></tr>" out)))
-          skips)
-        (write-string "</tbody></table></section>" out)
-
-        ;; --- Feeds table ---
-        (write-string "<table class=\"feed-table\"><thead><tr>" out)
-        (write-string "<th>id</th><th>cat</th><th>label</th><th>title</th>" out)
-        (write-string "<th>url</th><th>refresh</th><th title=\"minimum entries pinned per feed regardless of category cap\">pin</th>" out)
-        (write-string "<th>last</th><th>fails</th><th>error</th><th></th></tr></thead><tbody>" out)
-        (for-each
-          (lambda (f)
-            (let* ((id      (row-field f "id"))
-                   (url     (row-field f "url"))
-                   (title   (row-field f "title"))
-                   (label   (row-field f "label"))
-                   (cat     (row-field f "category"))
-                   (refresh (row-field f "refresh_seconds"))
-                   (refresh-int (or (string->number refresh) 0))
-                   (pin     (row-field f "min_entries"))
-                   (fails   (row-field f "failure_count"))
-                   (enabled (row-field f "enabled"))
-                   (last    (row-field f "last_fetched"))
-                   (err     (row-field f "last_error")))
-              (write-string "<tr" out)
-              (when (string=? enabled "no") (write-string " class=\"disabled\"" out))
-              (write-string "><td>" out) (write-string (html-escape id) out)
-              (write-string "</td><td>" out) (write-string (html-escape cat) out)
-              (write-string "</td><td>" out) (write-string (html-escape label) out)
-              (write-string "</td><td>" out) (write-string (html-escape title) out)
-              (write-string "</td><td class=\"url\">" out)
-              (write-string (html-escape url) out)
-              (write-string (string-append
-                              "</td><td><form method=\"post\" "
-                              "action=\"/feeds/admin/")
-                            out)
-              (write-string (html-attr-escape id) out)
-              (write-string "/refresh-interval\" class=\"inline\">" out)
-              (write-string (string-append
-                              "<input type=\"text\" name=\"refresh\" size=\"5\" "
-                              "value=\"")
-                            out)
-              (write-string (html-attr-escape (format-duration refresh-int)) out)
-              (write-string (string-append
-                              "\"><button type=\"submit\" "
-                              "class=\"linkish\">↵</button></form></td>")
-                            out)
-              (write-string "<td><form method=\"post\" action=\"/feeds/admin/" out)
-              (write-string (html-attr-escape id) out)
-              (write-string "/min-entries\" class=\"inline\">" out)
-              (write-string "<input type=\"number\" name=\"min_entries\" size=\"3\" min=\"0\" max=\"50\" value=\"" out)
-              (write-string (html-attr-escape pin) out)
-              (write-string (string-append
-                              "\"><button type=\"submit\" "
-                              "class=\"linkish\">↵</button></form></td>")
-                            out)
-              (write-string "<td>" out) (write-string (html-escape last) out)
-              (write-string "</td><td>" out) (write-string (html-escape fails) out)
-              (write-string "</td><td class=\"err\">" out)
-              (write-string (html-escape err) out)
-              (write-string "</td><td class=\"acts\">" out)
-              (write-string "<form method=\"post\" action=\"/feeds/admin/" out)
-              (write-string (html-attr-escape id) out)
-              (write-string "/toggle\" class=\"inline\"><button class=\"linkish\">" out)
-              (write-string (if (string=? enabled "yes") "disable" "enable") out)
-              (write-string "</button></form> " out)
-              (write-string "<form method=\"post\" action=\"/feeds/admin/" out)
-              (write-string (html-attr-escape id) out)
-              (write-string "/refresh\" class=\"inline\"><button class=\"linkish\">refresh now</button></form> " out)
-              (write-string "<form method=\"post\" action=\"/feeds/admin/" out)
-              (write-string (html-attr-escape id) out)
-              (write-string (string-append
-                              "/delete\" class=\"inline\" "
-                              "data-confirm=\"Delete this feed and all its entries?\">")
-                            out)
-              (write-string "<button class=\"linkish danger\">delete</button></form>" out)
-              (write-string "</td></tr>" out)))
-          feeds)
-        (write-string "</tbody></table>" out)
+      (let* ((feeds      (list-feeds cfg))
+             (cat-orders (list-category-orders cfg))
+             (skips      (list-skip-patterns cfg))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Feed admin")
+                   (a (@ (href "/feeds")) ,(raw "← back to feeds")))
+                 ;; Add-feed form: refresh accepts duration strings like 1h.
+                 (form (@ (method "post") (action "/feeds/admin")
+                          (class "feed-new"))
+                   (h2 "Add feed")
+                   (label "URL "
+                     (input (@ (type "url") (name "url") (required #t))))
+                   (label "Title "
+                     (input (@ (type "text") (name "title") (required #t))))
+                   (label "Label "
+                     (input (@ (type "text") (name "label") (maxlength "8"))))
+                   (label "Category "
+                     (input (@ (type "text") (name "category") (value "misc"))))
+                   (label "Refresh "
+                     (input (@ (type "text") (name "refresh") (value "1h")
+                               (placeholder "30s, 10m, 1h, 1d"))))
+                   (button (@ (type "submit")) "Add"))
+                 (section (@ (class "cat-orders"))
+                   (h2 "Categories")
+                   (table (@ (class "feed-table"))
+                     (thead (tr (th "name") (th "sort order") (th)))
+                     (tbody ,@(map cat-order-row-sxml cat-orders))))
+                 (section (@ (class "skip-patterns"))
+                   (h2 "Skip patterns")
+                   (p (@ (class "hint"))
+                      "Incoming entries whose title matches any of these "
+                      "are silently dropped at fetch time.")
+                   (form (@ (method "post") (action "/feeds/admin/skip-pattern")
+                            (class "skip-new inline"))
+                     (select (@ (name "kind"))
+                       (option (@ (value "prefix")) "prefix")
+                       (option (@ (value "contains")) "contains"))
+                     (input (@ (type "text") (name "pattern") (required #t)
+                               (placeholder "e.g. Anzeige")))
+                     (button (@ (type "submit")) "Add"))
+                   (table (@ (class "feed-table"))
+                     (thead (tr (th "kind") (th "pattern") (th)))
+                     (tbody ,@(map skip-row-sxml skips))))
+                 (table (@ (class "feed-table"))
+                   (thead (tr (th "id") (th "cat") (th "label") (th "title")
+                              (th "url") (th "refresh")
+                              (th (@ (title "minimum entries pinned per feed regardless of category cap"))
+                                  "pin")
+                              (th "last") (th "fails") (th "error") (th)))
+                   (tbody ,@(map feed-row-sxml feeds))))))
         (html-response
           (render-page req auth
                        '((title  . "Feed admin")
                          (active . feeds)
                          (body-class . "feeds-page"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     ;; ==============================================================
     ;; Routes

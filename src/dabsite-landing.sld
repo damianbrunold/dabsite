@@ -7,7 +7,7 @@
           (scm net http response)
           (scm net http route)
           (scm net http forms)
-          (scm html)
+          (scm html builder)
           (dabsite db)
           (dabsite auth)
           (dabsite views)
@@ -115,22 +115,20 @@
         (cond
           ((not page) (render-error 404 "Page not found."))
           (else
-           (let* ((title    (page-field page "title"))
-                  (html     (cached-or-render cfg page))
-                  (out      (open-output-string)))
-             (write-string "<article class=\"page\">" out)
-             (write-string html out)
-             (when (authed? auth req)
-               (write-string "<p class=\"page-actions\">" out)
-               (write-string "<a href=\"/edit/" out)
-               (write-string (html-attr-escape slug) out)
-               (write-string "\">Edit</a></p>" out))
-             (write-string "</article>" out)
+           (let* ((title (page-field page "title"))
+                  (html  (cached-or-render cfg page))
+                  (body  `(article (@ (class "page"))
+                            ,(raw html)
+                            ,@(if (authed? auth req)
+                                  `((p (@ (class "page-actions"))
+                                       (a (@ (href ,(string-append "/edit/" slug)))
+                                          "Edit")))
+                                  '()))))
              (html-response
                (render-page req auth
                             (list (cons 'title title)
                                   (cons 'active active))
-                            (get-output-string out))))))))
+                            (html->string body))))))))
 
     (define (render-edit-view req auth cfg slug)
       (let* ((existing (page-by-slug cfg slug))
@@ -139,102 +137,83 @@
                                  (else slug))))
              (format   (if existing (page-field existing "format") "markdown"))
              (source   (if existing (page-field existing "source") ""))
-             (out      (open-output-string)))
-        (write-string "<h1>Edit: " out)
-        (write-string (html-escape slug) out)
-        (write-string "</h1>" out)
-        (write-string "<form method=\"post\" action=\"/edit/" out)
-        (write-string (html-attr-escape slug) out)
-        (write-string "\" class=\"page-edit\">" out)
-
-        (write-string "<label>Title<input type=\"text\" name=\"title\" value=\"" out)
-        (write-string (html-attr-escape title) out)
-        (write-string "\" required></label>" out)
-
-        (write-string "<label>Format<select name=\"format\">" out)
-        (write-string "<option value=\"markdown\"" out)
-        (when (string=? format "markdown") (write-string " selected" out))
-        (write-string ">Markdown</option>" out)
-        (write-string "<option value=\"html\"" out)
-        (when (string=? format "html") (write-string " selected" out))
-        (write-string ">HTML fragment</option>" out)
-        (write-string "</select></label>" out)
-
-        (write-string "<label>Source<textarea name=\"source\" rows=\"20\" required>" out)
-        (write-string (html-escape source) out)
-        (write-string "</textarea></label>" out)
-
-        (write-string "<div class=\"actions\">" out)
-        (write-string "<button type=\"submit\">Save</button>" out)
-        (write-string "<a href=\"/" out)
-        (when (not (string=? slug "home"))
-          (write-string "p/" out)
-          (write-string (html-attr-escape slug) out))
-        (write-string "\">Cancel</a>" out)
-        (write-string "</div>" out)
-        (write-string "</form>" out)
+             (cancel-href (cond ((string=? slug "home") "/")
+                                (else (string-append "/p/" slug))))
+             (body
+               `((h1 "Edit: " ,slug)
+                 (form (@ (method "post")
+                          (action ,(string-append "/edit/" slug))
+                          (class "page-edit"))
+                   (label "Title"
+                     (input (@ (type "text") (name "title")
+                               (value ,title) (required #t))))
+                   (label "Format"
+                     (select (@ (name "format"))
+                       (option (@ (value "markdown")
+                                  (selected ,(string=? format "markdown")))
+                               "Markdown")
+                       (option (@ (value "html")
+                                  (selected ,(string=? format "html")))
+                               "HTML fragment")))
+                   (label "Source"
+                     (textarea (@ (name "source") (rows "20") (required #t))
+                       ,source))
+                   (div (@ (class "actions"))
+                     (button (@ (type "submit")) "Save")
+                     (a (@ (href ,cancel-href)) "Cancel"))))))
         (html-response
           (render-page req auth
                        (list (cons 'title (string-append "Edit " slug))
                              (cons 'active (if (string=? slug "home") 'home #f))
                              (cons 'body-class "editor"))
-                       (get-output-string out)))))
+                       (html->string body)))))
+
+    (define (page-row-sxml row)
+      (let* ((slug    (page-field row "slug"))
+             (title   (page-field row "title"))
+             (updated (page-field row "updated"))
+             (view-href (cond ((string=? slug "home") "/")
+                              (else (string-append "/p/" slug))))
+             (display-title (cond ((string=? title "") slug)
+                                  (else title))))
+        `(li (a (@ (class "row") (href ,view-href))
+                (span (@ (class "name")) ,display-title)
+                (span (@ (class "meta"))
+                      ,slug " " ,(raw "&middot;") " updated " ,updated))
+             " "
+             (a (@ (class "linkish")
+                   (href ,(string-append "/edit/" slug)))
+                "edit")
+             ,@(if (string=? slug "home")
+                   '()
+                   `(" "
+                     (form (@ (method "post")
+                              (action ,(string-append "/pages/" slug "/delete"))
+                              (class "inline")
+                              (data-confirm "Delete this page?"))
+                       (button (@ (class "linkish danger")) "delete")))))))
 
     (define (render-index req auth cfg)
-      (let ((rows (list-pages cfg))
-            (out  (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Pages</h1></header>"
-                  "<form method=\"post\" action=\"/pages\" class=\"grocery-new\">"
-                  "<input type=\"text\" name=\"slug\" required "
-                  "maxlength=\"40\" pattern=\"[a-z0-9_-]+\" "
-                  "placeholder=\"new slug (a-z, 0-9, -, _)\">"
-                  "<button type=\"submit\">Create / open</button>"
-                  "</form>")
-        (cond
-          ((null? rows)
-           (out! out "<p class=\"empty\">No pages yet.</p>"))
-          (else
-           (out! out "<ul class=\"grocery-lists\">")
-           (for-each
-             (lambda (row)
-               (let* ((slug (page-field row "slug"))
-                      (title (page-field row "title"))
-                      (updated (page-field row "updated"))
-                      (view-href (cond ((string=? slug "home") "/")
-                                       (else (string-append
-                                               "/p/"
-                                               (html-attr-escape slug))))))
-                 (out! out "<li>"
-                           "<a class=\"row\" href=\""
-                           view-href "\">"
-                           "<span class=\"name\">"
-                           (html-escape (cond ((string=? title "") slug)
-                                              (else title)))
-                           "</span>"
-                           "<span class=\"meta\">"
-                           (html-escape slug)
-                           " &middot; updated "
-                           (html-escape updated) "</span></a>"
-                           " <a class=\"linkish\" href=\"/edit/"
-                           (html-attr-escape slug) "\">edit</a>"
-                           (cond
-                             ((string=? slug "home") "")
-                             (else
-                              (string-append
-                                " <form method=\"post\" action=\"/pages/"
-                                (html-attr-escape slug)
-                                "/delete\" class=\"inline\" "
-                                "data-confirm=\"Delete this page?\">"
-                                "<button class=\"linkish danger\">delete</button>"
-                                "</form>")))
-                           "</li>")))
-             rows)
-           (out! out "</ul>")))
+      (let* ((rows (list-pages cfg))
+             (body
+               `((header (@ (class "feeds-head")) (h1 "Pages"))
+                 (form (@ (method "post") (action "/pages")
+                          (class "grocery-new"))
+                   (input (@ (type "text") (name "slug") (required #t)
+                             (maxlength "40") (pattern "[a-z0-9_-]+")
+                             (placeholder "new slug (a-z, 0-9, -, _)")))
+                   (button (@ (type "submit")) "Create / open"))
+                 ,(cond
+                    ((null? rows)
+                     `(p (@ (class "empty")) "No pages yet."))
+                    (else
+                     `(ul (@ (class "grocery-lists"))
+                          ,@(map page-row-sxml rows)))))))
         (html-response
           (render-page req auth
                        '((title . "Pages")
                          (active . pages))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     (define (delete-page! cfg slug)
       (with-db cfg

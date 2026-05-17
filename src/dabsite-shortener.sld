@@ -9,7 +9,7 @@
           (scm net http response)
           (scm net http route)
           (scm net http forms)
-          (scm html)
+          (scm html builder)
           (dabsite db)
           (dabsite auth)
           (dabsite views))
@@ -143,69 +143,61 @@
 
     (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
+    (define (short-row-sxml e)
+      (let ((code    (row-field e "code"))
+            (target  (row-field e "target"))
+            (note    (row-field e "note"))
+            (hits    (row-field e "hits"))
+            (created (row-field e "created")))
+        `(tr
+           (td (@ (class "code")) ,code)
+           (td (@ (class "short"))
+               (a (@ (href ,(string-append "/s/" code))
+                     (target "_blank") (rel "noopener"))
+                  ,(string-append "/s/" code)))
+           (td (@ (class "url"))
+               (a (@ (href ,target) (target "_blank") (rel "noopener"))
+                  ,target))
+           (td (@ (class "note"))    ,note)
+           (td (@ (class "hits"))    ,hits)
+           (td (@ (class "created")) ,created)
+           (td (@ (class "acts"))
+               (form (@ (method "post")
+                        (action ,(string-append "/shortener/" code "/delete"))
+                        (class "inline")
+                        (data-confirm "Delete this short link?"))
+                 (button (@ (class "linkish danger")) "delete"))))))
+
     (define (render-admin req auth cfg . opt)
-      (let ((entries (list-codes cfg))
-            (msg     (cond ((pair? opt) (car opt)) (else #f)))
-            (out     (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>URL shortener</h1></header>")
-        (when msg
-          (out! out "<p class=\"hint\">" (html-escape msg) "</p>"))
-
-        (out! out "<form method=\"post\" action=\"/shortener\" "
-                  "class=\"feed-new\">"
-                  "<h2>New short link</h2>"
-                  "<label>Target URL "
-                  "<input type=\"url\" name=\"target\" required "
-                  "placeholder=\"https://example.com/\"></label>"
-                  "<label>Code (optional) "
-                  "<input type=\"text\" name=\"code\" "
-                  "pattern=\"[A-Za-z0-9_-]{1,32}\" "
-                  "placeholder=\"auto: 6 random chars\"></label>"
-                  "<label>Note "
-                  "<input type=\"text\" name=\"note\" "
-                  "placeholder=\"what's this for?\"></label>"
-                  "<button type=\"submit\">Add</button>"
-                  "</form>")
-
-        (out! out "<table class=\"feed-table mobile-cards links-list\">"
-                  "<thead><tr>"
-                  "<th>code</th><th>short url</th><th>target</th>"
-                  "<th>note</th><th>hits</th><th>created</th><th></th>"
-                  "</tr></thead><tbody>")
-        (for-each
-          (lambda (e)
-            (let ((code   (row-field e "code"))
-                  (target (row-field e "target"))
-                  (note   (row-field e "note"))
-                  (hits   (row-field e "hits"))
-                  (created (row-field e "created")))
-              (out! out "<tr>"
-                        "<td class=\"code\">" (html-escape code) "</td>"
-                        "<td class=\"short\"><a href=\"/s/"
-                        (html-attr-escape code) "\""
-                        " target=\"_blank\" rel=\"noopener\">/s/"
-                        (html-escape code) "</a></td>"
-                        "<td class=\"url\"><a href=\"" (html-attr-escape target)
-                        "\" target=\"_blank\" rel=\"noopener\">"
-                        (html-escape target) "</a></td>"
-                        "<td class=\"note\">" (html-escape note) "</td>"
-                        "<td class=\"hits\">" (html-escape hits) "</td>"
-                        "<td class=\"created\">" (html-escape created) "</td>"
-                        "<td class=\"acts\">"
-                        "<form method=\"post\" action=\"/shortener/"
-                        (html-attr-escape code)
-                        "/delete\" class=\"inline\" "
-                        "data-confirm=\"Delete this short link?\">"
-                        "<button class=\"linkish danger\">delete</button>"
-                        "</form></td></tr>")))
-          entries)
-        (out! out "</tbody></table>")
+      (let* ((entries (list-codes cfg))
+             (msg     (cond ((pair? opt) (car opt)) (else #f)))
+             (body
+               `((header (@ (class "feeds-head")) (h1 "URL shortener"))
+                 ,@(if msg `((p (@ (class "hint")) ,msg)) '())
+                 (form (@ (method "post") (action "/shortener")
+                          (class "feed-new"))
+                   (h2 "New short link")
+                   (label "Target URL "
+                     (input (@ (type "url") (name "target") (required #t)
+                               (placeholder "https://example.com/"))))
+                   (label "Code (optional) "
+                     (input (@ (type "text") (name "code")
+                               (pattern "[A-Za-z0-9_-]{1,32}")
+                               (placeholder "auto: 6 random chars"))))
+                   (label "Note "
+                     (input (@ (type "text") (name "note")
+                               (placeholder "what's this for?"))))
+                   (button (@ (type "submit")) "Add"))
+                 (table (@ (class "feed-table mobile-cards links-list"))
+                   (thead (tr (th "code") (th "short url") (th "target")
+                              (th "note") (th "hits") (th "created") (th)))
+                   (tbody ,@(map short-row-sxml entries))))))
         (html-response
           (render-page req auth
                        '((title  . "URL shortener")
                          (active . shortener)
                          (body-class . "feeds-page"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     ;; ----- routes -----
 

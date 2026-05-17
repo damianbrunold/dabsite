@@ -12,7 +12,7 @@
           (scm net http route)
           (scm net http forms)
           (scm net http cookies)
-          (scm html)
+          (scm html builder)
           (dabsite db)
           (dabsite auth)
           (dabsite views))
@@ -357,6 +357,90 @@
             ((string=? v "no")    "✗")
             (else "")))
 
+    (define (poll-header-sxml poll)
+      (let ((closes      (row-field poll "closes_at_str"))
+            (eff-closed? (string=? (row-field poll "closed") "yes"))
+            (desc        (row-field poll "description")))
+        `(header (@ (class "poll-head"))
+           (h1 ,(row-field poll "title"))
+           ,(cond
+              (eff-closed?
+               `(p (@ (class "poll-status closed"))
+                   "Closed"
+                   ,@(cond ((not (string=? closes ""))
+                            `(,(string-append " — was open until " closes)))
+                           (else '()))))
+              ((not (string=? closes ""))
+               `(p (@ (class "poll-status open"))
+                   "Open until " ,closes))
+              (else ""))
+           ,(cond
+              ((not (string=? desc ""))
+               `(p (@ (class "poll-desc")) ,desc))
+              (else "")))))
+
+    (define (poll-matrix-row-sxml cookie options cmap r)
+      (let* ((rid     (row-field r "id"))
+             (rname   (row-field r "name"))
+             (rcookie (row-field r "owner_cookie"))
+             (mine?   (and cookie (string=? cookie rcookie))))
+        `(tr (@ (class ,(if mine? "mine" #f)))
+             (td (@ (class "name")) ,rname)
+             ,@(map (lambda (o)
+                      (let* ((oid (row-field o "id"))
+                             (v   (choice-for-cell cmap rid oid)))
+                        `(td (@ (class ,(cell-class v))) ,(cell-glyph v))))
+                    options))))
+
+    (define (poll-matrix-sxml cookie options responses cmap counts)
+      `(div (@ (class "poll-matrix-wrap"))
+         (table (@ (class "poll-matrix"))
+           (thead
+             (tr (th "Name")
+                 ,@(map (lambda (o)
+                          `(th (@ (class "opt"))
+                               ,(row-field o "label")))
+                        options)))
+           (tbody
+             ,(cond
+                ((null? responses)
+                 `(tr (td (@ (colspan ,(number->string (+ 1 (length options))))
+                             (class "empty"))
+                          "No responses yet.")))
+                (else
+                 `(,@(map (lambda (r)
+                            (poll-matrix-row-sxml cookie options cmap r))
+                          responses))))
+             (tr (@ (class "tally"))
+                 (th "tally")
+                 ,@(map
+                    (lambda (cnt)
+                      (let ((y (car cnt)) (m (cadr cnt)))
+                        `(td (span (@ (class "y")) ,(number->string y))
+                             ,@(cond ((> m 0)
+                                      `(" " (span (@ (class "m"))
+                                                  ,(string-append
+                                                     "+" (number->string m)))))
+                                     (else '())))))
+                    counts))))))
+
+    (define (poll-form-field-sxml o existing-rid cmap)
+      (let* ((oid (row-field o "id"))
+             (current (cond (existing-rid
+                             (choice-for-cell cmap
+                               (number->string existing-rid) oid))
+                            (else "")))
+             (name (string-append "option_" oid)))
+        `(fieldset (@ (class "opt"))
+           (legend ,(row-field o "label"))
+           ,@(map (lambda (v)
+                    `(label (@ (class ,(string-append "choice " v)))
+                       (input (@ (type "radio") (name ,name) (value ,v)
+                                 (checked ,(if (string=? current v) #t #f))
+                                 (required #t)))
+                       (span ,v)))
+                  '("yes" "maybe" "no")))))
+
     (define (render-public-poll req auth cfg poll public-base secure-cookies?)
       (let* ((poll-id   (string->number (row-field poll "id")))
              (slug      (row-field poll "slug"))
@@ -365,7 +449,6 @@
              (choices   (poll-choices    cfg poll-id))
              (cmap      (build-choice-map choices))
              (option-ids (map (lambda (o) (row-field o "id")) options))
-             ;; Tally only over yes/maybe response choice values, NOT all.
              (flat-choices
                (map (lambda (c) (cons (cdr (assoc "option_id" c))
                                       (cdr (assoc "value"     c))))
@@ -373,138 +456,80 @@
              (counts    (tally option-ids flat-choices))
              (cookie    (request-owner-cookie req))
              (mine      (and cookie (find-response cfg poll-id cookie)))
-             (out       (open-output-string)))
-
-        (out! out "<header class=\"poll-head\"><h1>"
-                  (html-escape (row-field poll "title"))
-                  "</h1>")
-        (let ((closes (row-field poll "closes_at_str"))
-              (eff-closed? (string=? (row-field poll "closed") "yes")))
-          (cond
-            (eff-closed?
-             (out! out "<p class=\"poll-status closed\">Closed"
-                       (cond ((not (string=? closes ""))
-                              (string-append " — was open until "
-                                             (html-escape closes)))
-                             (else ""))
-                       "</p>"))
-            ((not (string=? closes ""))
-             (out! out "<p class=\"poll-status open\">Open until "
-                       (html-escape closes) "</p>"))))
-        (when (not (string=? (row-field poll "description") ""))
-          (out! out "<p class=\"poll-desc\">"
-                    (html-escape (row-field poll "description"))
-                    "</p>"))
-        (out! out "</header>")
-
-        ;; Response matrix.
-        (out! out "<div class=\"poll-matrix-wrap\">"
-                  "<table class=\"poll-matrix\"><thead><tr><th>Name</th>")
-        (for-each
-          (lambda (o)
-            (out! out "<th class=\"opt\">"
-                      (html-escape (row-field o "label")) "</th>"))
-          options)
-        (out! out "</tr></thead><tbody>")
-        (cond
-          ((null? responses)
-           (out! out "<tr><td colspan=\"" (number->string (+ 1 (length options)))
-                     "\" class=\"empty\">No responses yet.</td></tr>"))
-          (else
-           (for-each
-             (lambda (r)
-               (let ((rid    (row-field r "id"))
-                     (rname  (row-field r "name"))
-                     (rcookie (row-field r "owner_cookie")))
-                 (out! out "<tr")
-                 (when (and cookie (string=? cookie rcookie))
-                   (out! out " class=\"mine\""))
-                 (out! out "><td class=\"name\">" (html-escape rname) "</td>")
-                 (for-each
-                   (lambda (o)
-                     (let* ((oid (row-field o "id"))
-                            (v   (choice-for-cell cmap rid oid)))
-                       (out! out "<td class=\"" (cell-class v) "\">"
-                                 (cell-glyph v) "</td>")))
-                   options)
-                 (out! out "</tr>")))
-             responses)))
-        ;; Tally row.
-        (out! out "<tr class=\"tally\"><th>tally</th>")
-        (for-each
-          (lambda (cnt)
-            (let ((y (car cnt)) (m (cadr cnt)) (n (caddr cnt)))
-              (out! out "<td>"
-                        "<span class=\"y\">" (number->string y) "</span>"
-                        (cond ((> m 0)
-                               (string-append " <span class=\"m\">+"
-                                              (number->string m) "</span>"))
-                              (else ""))
-                        "</td>")))
-          counts)
-        (out! out "</tr>")
-        (out! out "</tbody></table></div>")
-
-        ;; Response form. We don't show the form if the poll is closed
-        ;; (manually or by expiry); existing responses remain visible above.
-        (cond
-          ((string=? (row-field poll "closed") "yes")
-           (out! out "<p class=\"hint\">This poll is closed — "
-                     "no further responses can be added.</p>"))
-          (else
-           (out! out "<form method=\"post\" action=\"/poll/"
-                     (html-attr-escape slug) "\" class=\"poll-form\">"
-                     "<h2>"
-                     (cond (mine "Edit your response")
-                           (else "Add your response"))
-                     "</h2>"
-                     "<label>Your name "
-                     "<input type=\"text\" name=\"name\" required maxlength=\"40\""
-                     " value=\"")
-           (when mine (out! out (html-attr-escape (row-field mine "name"))))
-           (out! out "\"></label>")
-           (let ((existing-rid (and mine
-                                    (string->number (row-field mine "id")))))
-             (for-each
-               (lambda (o)
-                 (let* ((oid (row-field o "id"))
-                        (current (cond (existing-rid
-                                        (choice-for-cell cmap
-                                          (number->string existing-rid) oid))
-                                       (else ""))))
-                   (out! out "<fieldset class=\"opt\"><legend>"
-                             (html-escape (row-field o "label"))
-                             "</legend>")
-                   (for-each
-                     (lambda (v glyph)
-                       (let ((name (string-append "option_" oid)))
-                         (out! out "<label class=\"choice " v "\">"
-                                   "<input type=\"radio\" name=\""
-                                   (html-attr-escape name)
-                                   "\" value=\"" v "\"")
-                         (when (string=? current v)
-                           (out! out " checked"))
-                         (out! out " required>"
-                                   "<span>" glyph "</span></label>")))
-                     '("yes" "maybe" "no")
-                     '("yes" "maybe" "no")))
-                 (out! out "</fieldset>"))
-               options))
-           (out! out "<div class=\"actions\"><button type=\"submit\">"
-                     (cond (mine "Update") (else "Submit"))
-                     "</button></div></form>")))
-
+             (existing-rid (and mine
+                                (string->number (row-field mine "id"))))
+             (closed? (string=? (row-field poll "closed") "yes"))
+             (form-block
+               (cond
+                 (closed?
+                  `(p (@ (class "hint"))
+                      "This poll is closed — no further responses can be added."))
+                 (else
+                  `(form (@ (method "post")
+                            (action ,(string-append "/poll/" slug))
+                            (class "poll-form"))
+                     (h2 ,(if mine "Edit your response" "Add your response"))
+                     (label "Your name "
+                       (input (@ (type "text") (name "name")
+                                 (required #t) (maxlength "40")
+                                 (value ,(if mine
+                                             (row-field mine "name")
+                                             "")))))
+                     ,@(map (lambda (o)
+                              (poll-form-field-sxml o existing-rid cmap))
+                            options)
+                     (div (@ (class "actions"))
+                       (button (@ (type "submit"))
+                         ,(if mine "Update" "Submit")))))))
+             (body
+               `(,(poll-header-sxml poll)
+                 ,(poll-matrix-sxml cookie options responses cmap counts)
+                 ,form-block)))
         (html-response
           (render-page req auth
                        (list (cons 'title  (row-field poll "title"))
                              (cons 'active 'polls)
                              (cons 'body-class "poll-public"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     ;; --- admin views ---
 
+    (define (admin-poll-row-sxml p)
+      (let* ((slug    (row-field p "slug"))
+             (closed? (string=? (row-field p "closed_eff") "yes"))
+             (manual? (string=? (row-field p "closed_manual") "yes")))
+        `(tr
+           (td (@ (class "slug"))
+               (a (@ (href ,(string-append "/poll/" slug))) ,slug))
+           (td (@ (class "title"))     ,(row-field p "title"))
+           (td (@ (class "n-options")) ,(row-field p "n_options"))
+           (td (@ (class "n-responses")) ,(row-field p "n_responses"))
+           (td (@ (class "closes"))    ,(row-field p "closes_at_str"))
+           (td (@ (class "poll-status-cell"))
+               (span (@ (class ,(if closed? "badge closed" "badge open")))
+                     ,(if closed? "closed" "open")))
+           (td (@ (class "created"))   ,(row-field p "created"))
+           (td (@ (class "acts"))
+               ,(cond
+                  (manual?
+                   `(form (@ (method "post")
+                             (action ,(string-append "/polls/" slug "/reopen"))
+                             (class "inline"))
+                      (button (@ (class "linkish")) "reopen")))
+                  (else
+                   `(form (@ (method "post")
+                             (action ,(string-append "/polls/" slug "/close"))
+                             (class "inline"))
+                      (button (@ (class "linkish")) "close"))))
+               " "
+               (form (@ (method "post")
+                        (action ,(string-append "/polls/" slug "/delete"))
+                        (class "inline")
+                        (data-confirm "Delete this poll and all responses?"))
+                 (button (@ (class "linkish danger")) "delete"))))))
+
     (define (render-admin-list req auth cfg)
-      (let ((polls (alist-rows cfg
+      (let* ((polls (alist-rows cfg
                      (string-append
                        "SELECT p.slug, p.title, "
                        "       CASE WHEN p.closed "
@@ -518,99 +543,57 @@
                        "       (SELECT count(*) FROM poll_options po "
                        "          WHERE po.poll_id = p.id)::text AS n_options "
                        "FROM polls p ORDER BY created_at DESC")))
-            (out   (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Polls</h1>"
-                  "<a class=\"btn\" href=\"/polls/new\">New poll</a></header>")
-        (cond
-          ((null? polls)
-           (out! out "<p class=\"empty\">No polls yet.</p>"))
-          (else
-           (out! out "<table class=\"feed-table mobile-cards polls-list\">"
-                     "<thead><tr>"
-                     "<th>slug</th><th>title</th><th>options</th>"
-                     "<th>responses</th><th>closes</th><th>status</th>"
-                     "<th>created</th><th></th>"
-                     "</tr></thead><tbody>")
-           (for-each
-             (lambda (p)
-               (let* ((slug    (row-field p "slug"))
-                      (closed? (string=? (row-field p "closed_eff") "yes"))
-                      (manual? (string=? (row-field p "closed_manual") "yes")))
-                 (out! out "<tr>"
-                           "<td class=\"slug\"><a href=\"/poll/"
-                           (html-attr-escape slug) "\">"
-                           (html-escape slug) "</a></td>"
-                           "<td class=\"title\">"
-                           (html-escape (row-field p "title")) "</td>"
-                           "<td class=\"n-options\">"
-                           (html-escape (row-field p "n_options")) "</td>"
-                           "<td class=\"n-responses\">"
-                           (html-escape (row-field p "n_responses")) "</td>"
-                           "<td class=\"closes\">"
-                           (html-escape (row-field p "closes_at_str")) "</td>"
-                           "<td class=\"poll-status-cell\">"
-                           (cond (closed? "<span class=\"badge closed\">closed</span>")
-                                 (else    "<span class=\"badge open\">open</span>"))
-                           "</td>"
-                           "<td class=\"created\">"
-                           (html-escape (row-field p "created")) "</td>"
-                           "<td class=\"acts\">")
-                 ;; close / reopen toggle
-                 (cond
-                   (manual?
-                    (out! out "<form method=\"post\" action=\"/polls/"
-                              (html-attr-escape slug)
-                              "/reopen\" class=\"inline\">"
-                              "<button class=\"linkish\">reopen</button>"
-                              "</form> "))
-                   (else
-                    (out! out "<form method=\"post\" action=\"/polls/"
-                              (html-attr-escape slug)
-                              "/close\" class=\"inline\">"
-                              "<button class=\"linkish\">close</button>"
-                              "</form> ")))
-                 (out! out "<form method=\"post\" action=\"/polls/"
-                           (html-attr-escape slug)
-                           "/delete\" class=\"inline\" "
-                           "data-confirm=\"Delete this poll and all responses?\">"
-                           "<button class=\"linkish danger\">delete</button>"
-                           "</form></td></tr>")))
-             polls)
-           (out! out "</tbody></table>")))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Polls")
+                   (a (@ (class "btn") (href "/polls/new")) "New poll"))
+                 ,(cond
+                    ((null? polls)
+                     `(p (@ (class "empty")) "No polls yet."))
+                    (else
+                     `(table (@ (class "feed-table mobile-cards polls-list"))
+                        (thead
+                          (tr (th "slug") (th "title") (th "options")
+                              (th "responses") (th "closes") (th "status")
+                              (th "created") (th)))
+                        (tbody ,@(map admin-poll-row-sxml polls))))))))
         (html-response
           (render-page req auth
                        '((title  . "Polls")
                          (active . polls)
                          (body-class . "feeds-page"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     (define (render-admin-new req auth cfg . opt)
-      (let ((msg (cond ((pair? opt) (car opt)) (else #f)))
-            (out (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>New poll</h1>"
-                  "<a href=\"/polls\">← back</a></header>")
-        (when msg
-          (out! out "<p class=\"error\">" (html-escape msg) "</p>"))
-        (out! out "<form method=\"post\" action=\"/polls\" class=\"page-edit\">"
-                  "<label>Title <input type=\"text\" name=\"title\" required></label>"
-                  "<label>Slug (optional) <input type=\"text\" name=\"slug\" "
-                  "pattern=\"[a-z0-9_-]{1,64}\" "
-                  "placeholder=\"auto: word-word-word\"></label>"
-                  "<label>Description "
-                  "<textarea name=\"description\" rows=\"3\"></textarea></label>"
-                  "<label>Options (one per line)"
-                  "<textarea name=\"options\" rows=\"8\" required "
-                  "placeholder=\"Mon 2pm&#10;Tue 6pm&#10;Wed 9am\"></textarea></label>"
-                  "<label>Closes at (optional) "
-                  "<input type=\"datetime-local\" name=\"closes_at\"></label>"
-                  "<div class=\"actions\"><button type=\"submit\">Create</button>"
-                  "<a href=\"/polls\">Cancel</a></div></form>")
+      (let* ((msg (cond ((pair? opt) (car opt)) (else #f)))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "New poll")
+                   (a (@ (href "/polls")) ,(raw "← back")))
+                 ,@(if msg `((p (@ (class "error")) ,msg)) '())
+                 (form (@ (method "post") (action "/polls") (class "page-edit"))
+                   (label "Title "
+                     (input (@ (type "text") (name "title") (required #t))))
+                   (label "Slug (optional) "
+                     (input (@ (type "text") (name "slug")
+                               (pattern "[a-z0-9_-]{1,64}")
+                               (placeholder "auto: word-word-word"))))
+                   (label "Description "
+                     (textarea (@ (name "description") (rows "3"))))
+                   (label "Options (one per line)"
+                     (textarea (@ (name "options") (rows "8") (required #t)
+                                  (placeholder ,(raw "Mon 2pm&#10;Tue 6pm&#10;Wed 9am")))))
+                   (label "Closes at (optional) "
+                     (input (@ (type "datetime-local") (name "closes_at"))))
+                   (div (@ (class "actions"))
+                     (button (@ (type "submit")) "Create")
+                     (a (@ (href "/polls")) "Cancel"))))))
         (html-response
           (render-page req auth
                        '((title  . "New poll")
                          (active . polls)
                          (body-class . "feeds-page editor"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     ;; ============================================================
     ;; Routes

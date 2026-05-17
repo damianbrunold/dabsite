@@ -7,8 +7,7 @@
           (scm net http response))
   (export render-page
           html-response
-          render-error
-          out!)
+          render-error)
   (begin
 
     ;; ------------------------------------------------------------
@@ -26,14 +25,6 @@
     ;; should build SXML directly and pass that through; render-page
     ;; accepts either.
     ;; ------------------------------------------------------------
-
-    ;; Defensive helper for the (still-many) pages building HTML to a
-    ;; port. write-string takes optional start/end indexes AFTER the
-    ;; port, so (write-string "a" "b" port) silently misuses "b" as the
-    ;; port. out! accepts any number of string fragments and emits them
-    ;; in order to the given port.
-    (define (out! port . strings)
-      (for-each (lambda (s) (write-string s port)) strings))
 
     (define (opt-ref opts key default)
       (let ((p (assq key opts)))

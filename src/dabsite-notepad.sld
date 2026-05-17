@@ -10,7 +10,7 @@
           (scm net http response)
           (scm net http route)
           (scm net http forms)
-          (scm html)
+          (scm html builder)
           (scm uri)
           (dabsite db)
           (dabsite auth)
@@ -177,133 +177,109 @@
 
     (define (note-field row key) (or (and row (cdr (assoc key row))) ""))
 
-    (define (render-list-view req auth cfg q)
-      (let ((notes (list-notes cfg q))
-            (out (open-output-string)))
-        (write-string "<header class=\"list-head\">" out)
-        (write-string "<h1>Notes</h1>" out)
-        (write-string "<form method=\"get\" action=\"/notes\" class=\"search\">" out)
-        (write-string "<input type=\"search\" name=\"q\" placeholder=\"search\" value=\"" out)
-        (write-string (html-attr-escape (or q "")) out)
-        (write-string "\">" out)
-        (write-string "<button type=\"submit\">Search</button>" out)
-        (write-string "<a class=\"btn\" href=\"/notes/new\">New note</a>" out)
-        (write-string "</form>" out)
-        (write-string "</header>" out)
+    (define (note-list-row-sxml row)
+      (let ((name (note-field row "name")))
+        `(li (a (@ (href ,(string-append "/notes/" name)))
+                (span (@ (class "name"))    ,name)
+                (span (@ (class "updated")) ,(note-field row "updated"))
+                (span (@ (class "preview")) ,(note-field row "preview"))))))
 
-        (cond
-          ((null? notes)
-           (write-string "<p class=\"empty\">No notes yet.</p>" out))
-          (else
-           (write-string "<ul class=\"notes\">" out)
-           (for-each
-             (lambda (row)
-               (write-string "<li><a href=\"/notes/" out)
-               (write-string (html-attr-escape (note-field row "name")) out)
-               (write-string "\"><span class=\"name\">" out)
-               (write-string (html-escape (note-field row "name")) out)
-               (write-string "</span><span class=\"updated\">" out)
-               (write-string (html-escape (note-field row "updated")) out)
-               (write-string "</span><span class=\"preview\">" out)
-               (write-string (html-escape (note-field row "preview")) out)
-               (write-string "</span></a></li>" out))
-             notes)
-           (write-string "</ul>" out)))
+    (define (render-list-view req auth cfg q)
+      (let* ((notes (list-notes cfg q))
+             (body
+               `((header (@ (class "list-head"))
+                   (h1 "Notes")
+                   (form (@ (method "get") (action "/notes") (class "search"))
+                     (input (@ (type "search") (name "q")
+                               (placeholder "search") (value ,(or q ""))))
+                     (button (@ (type "submit")) "Search")
+                     (a (@ (class "btn") (href "/notes/new")) "New note")))
+                 ,(cond
+                    ((null? notes)
+                     `(p (@ (class "empty")) "No notes yet."))
+                    (else
+                     `(ul (@ (class "notes"))
+                          ,@(map note-list-row-sxml notes)))))))
         (html-response
           (render-page req auth
                        '((title  . "Notes")
                          (active . notes))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     (define (render-view req auth cfg name)
       (let ((note (note-by-name cfg name)))
         (cond
           ((not note) (render-error 404 "Note not found."))
           (else
-           (let ((out (open-output-string)))
-             (write-string "<header class=\"note-head\">" out)
-             (write-string "<h1>" out)
-             (write-string (html-escape (note-field note "name")) out)
-             (write-string "</h1>" out)
-             (write-string "<div class=\"meta\">updated " out)
-             (write-string (html-escape (note-field note "updated")) out)
-             (write-string "</div>" out)
-             (write-string "<div class=\"actions\">" out)
-             (write-string "<a class=\"btn\" href=\"/notes/" out)
-             (write-string (html-attr-escape name) out)
-             (write-string "/edit\">Edit</a>" out)
-             (write-string "<form method=\"post\" action=\"/notes/" out)
-             (write-string (html-attr-escape name) out)
-             (write-string (string-append "/delete\" class=\"inline\" "
-                                          "data-confirm=\"Delete this note?\">")
-                           out)
-             (write-string "<button type=\"submit\" class=\"danger\">Delete</button>" out)
-             (write-string "</form>" out)
-             (write-string "</div>" out)
-             (write-string "</header>" out)
-             (let ((body (note-field note "body")))
-               (cond
-                 ((markdown-note? body)
-                  ;; "page" class reuses the landing-page typography.
-                  (write-string "<article class=\"page\">" out)
-                  (write-string (render-markdown (strip-markdown-marker body))
-                                out)
-                  (write-string "</article>" out))
-                 (else
-                  (write-string "<pre class=\"note-body\">" out)
-                  (write-string (html-escape body) out)
-                  (write-string "</pre>" out))))
+           (let* ((body-text (note-field note "body"))
+                  (body-node
+                    (cond
+                      ((markdown-note? body-text)
+                       ;; "page" class reuses landing-page typography.
+                       `(article (@ (class "page"))
+                          ,(raw (render-markdown
+                                  (strip-markdown-marker body-text)))))
+                      (else
+                       `(pre (@ (class "note-body")) ,body-text))))
+                  (page-body
+                    `((header (@ (class "note-head"))
+                        (h1 ,(note-field note "name"))
+                        (div (@ (class "meta"))
+                          "updated " ,(note-field note "updated"))
+                        (div (@ (class "actions"))
+                          (a (@ (class "btn")
+                                (href ,(string-append "/notes/" name "/edit")))
+                             "Edit")
+                          (form (@ (method "post")
+                                   (action ,(string-append "/notes/" name "/delete"))
+                                   (class "inline")
+                                   (data-confirm "Delete this note?"))
+                            (button (@ (type "submit") (class "danger"))
+                              "Delete"))))
+                      ,body-node)))
              (html-response
                (render-page req auth
                             (list (cons 'title (string-append "Note " name))
                                   (cons 'active 'notes))
-                            (get-output-string out))))))))
+                            (html->string page-body))))))))
 
     (define (render-edit-form req auth name body err)
-      (let ((out (open-output-string))
-            (new? (string=? name "")))
-        (write-string "<h1>" out)
-        (write-string (if new? "New note" "Edit note") out)
-        (write-string "</h1>" out)
-        (when err
-          (write-string "<p class=\"error\">" out)
-          (write-string (html-escape err) out)
-          (write-string "</p>" out))
-        (write-string "<form method=\"post\" action=\"" out)
-        (cond
-          (new? (write-string "/notes" out))
-          (else (write-string "/notes/" out)
-                (write-string (html-attr-escape name) out)
-                (write-string "/edit" out)))
-        (write-string "\" class=\"note-edit\">" out)
-
-        (when new?
-          (write-string "<label>Name (optional)<input type=\"text\" name=\"name\" value=\"" out)
-          (write-string "\" placeholder=\"auto: word-word-word\" maxlength=\"64\"></label>" out))
-
-        (write-string "<label>Body<textarea name=\"body\" rows=\"24\" autofocus>" out)
-        (write-string (html-escape body) out)
-        (write-string "</textarea></label>" out)
-        (write-string
-          (string-append
-            "<p class=\"hint\">Tip: start the first line with "
-            "<code>!markdown</code> to render the rest as Markdown.</p>")
-          out)
-
-        (write-string "<div class=\"actions\">" out)
-        (write-string "<button type=\"submit\">Save</button>" out)
-        (write-string "<a href=\"/notes" out)
-        (when (not new?)
-          (write-string "/" out)
-          (write-string (html-attr-escape name) out))
-        (write-string "\">Cancel</a>" out)
-        (write-string "</div></form>" out)
+      (let* ((new? (string=? name ""))
+             (form-action (cond (new? "/notes")
+                                (else (string-append "/notes/" name "/edit"))))
+             (cancel-href (cond (new? "/notes")
+                                (else (string-append "/notes/" name))))
+             (page-body
+               `((h1 ,(if new? "New note" "Edit note"))
+                 ,@(if err
+                       `((p (@ (class "error")) ,err))
+                       '())
+                 (form (@ (method "post") (action ,form-action)
+                          (class "note-edit"))
+                   ,@(if new?
+                         `((label "Name (optional)"
+                             (input (@ (type "text") (name "name") (value "")
+                                       (placeholder "auto: word-word-word")
+                                       (maxlength "64")))))
+                         '())
+                   (label "Body"
+                     (textarea (@ (name "body") (rows "24") (autofocus #t))
+                       ,body))
+                   (p (@ (class "hint"))
+                      "Tip: start the first line with "
+                      (code "!markdown")
+                      " to render the rest as Markdown.")
+                   (div (@ (class "actions"))
+                     (button (@ (type "submit")) "Save")
+                     (a (@ (href ,cancel-href)) "Cancel"))))))
         (html-response
           (render-page req auth
-                       (list (cons 'title (if new? "New note" (string-append "Edit " name)))
+                       (list (cons 'title
+                                   (if new? "New note"
+                                       (string-append "Edit " name)))
                              (cons 'active 'notes)
                              (cons 'body-class "editor"))
-                       (get-output-string out)))))
+                       (html->string page-body)))))
 
     (define (handle-create req params cfg auth)
       (let* ((form  (parse-www-form (or (http-request-body req) "")))

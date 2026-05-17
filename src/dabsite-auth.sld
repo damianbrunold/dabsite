@@ -11,7 +11,8 @@
           (scm net http response)
           (scm net http route)
           (scm net http forms)
-          (scm net http cookies))
+          (scm net http cookies)
+          (scm html builder))
   (export make-auth
           auth?
           authed?
@@ -139,24 +140,23 @@
         (make-http-response 302 headers "")))
 
     (define (login-page-html error?)
-      (let ((out (open-output-string)))
-        (write-string "<!doctype html><html lang=\"en\"><head>" out)
-        (write-string "<meta charset=\"utf-8\"><title>Login</title>" out)
-        (write-string "<link rel=\"stylesheet\" href=\"/static/site.css\">" out)
-        (write-string "</head><body><main class=\"login\">" out)
-        (write-string "<h1>Login</h1>" out)
-        (when error?
-          (write-string "<p class=\"error\">Wrong passphrase.</p>" out))
-        (write-string "<form method=\"post\" action=\"/login\">" out)
-        (write-string "<label>Passphrase " out)
-        (write-string
-          (string-append "<input type=\"password\" name=\"passphrase\" "
-                         "autocomplete=\"current-password\" autofocus required>")
-          out)
-        (write-string "</label>" out)
-        (write-string "<button type=\"submit\">Sign in</button>" out)
-        (write-string "</form></main></body></html>" out)
-        (get-output-string out)))
+      (html->string
+        (html5
+          `(@ (lang "en"))
+          `(head (meta (@ (charset "utf-8")))
+                 (title "Login")
+                 (link (@ (rel "stylesheet") (href "/static/site.css"))))
+          `(body (main (@ (class "login"))
+                       (h1 "Login")
+                       ,@(if error?
+                             `((p (@ (class "error")) "Wrong passphrase."))
+                             '())
+                       (form (@ (method "post") (action "/login"))
+                         (label "Passphrase "
+                           (input (@ (type "password") (name "passphrase")
+                                     (autocomplete "current-password")
+                                     (autofocus #t) (required #t))))
+                         (button (@ (type "submit")) "Sign in")))))))
 
     (define (html-ok body)
       (make-http-response 200

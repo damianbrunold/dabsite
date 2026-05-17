@@ -10,7 +10,7 @@
           (scm net http response)
           (scm net http route)
           (scm net http forms)
-          (scm html)
+          (scm html builder)
           (scm uri)
           (dabsite db)
           (dabsite auth)
@@ -381,140 +381,119 @@
 
     (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
-    (define (render-filters out q topics-selected from-d to-d topics)
-      (out! out "<form method=\"get\" action=\"/tracker\" class=\"feed-filters\">"
-                "<input type=\"search\" name=\"q\" placeholder=\"search text\" value=\""
-                (html-attr-escape (or q "")) "\">"
-                "<input type=\"date\" name=\"from\" value=\""
-                (html-attr-escape (or from-d "")) "\">"
-                "<input type=\"date\" name=\"to\" value=\""
-                (html-attr-escape (or to-d "")) "\">"
-                "<select name=\"topic\" multiple size=\"3\" class=\"tracker-topic-select\">")
-      (for-each
-        (lambda (t)
-          (let ((tid (row-field t "id")))
-            (out! out "<option value=\"" (html-attr-escape tid) "\"")
-            (when (member tid topics-selected string=?)
-              (out! out " selected"))
-            (out! out ">" (html-escape (row-field t "name")) "</option>")))
-        topics)
-      (out! out "</select>"
-                "<button type=\"submit\">Apply</button>"
-                "<a class=\"admin-link\" href=\"/tracker/topics\">topics</a>"
-                "</form>"))
+    (define (filters-sxml q topics-selected from-d to-d topics)
+      `(form (@ (method "get") (action "/tracker") (class "feed-filters"))
+         (input (@ (type "search") (name "q")
+                   (placeholder "search text") (value ,(or q ""))))
+         (input (@ (type "date") (name "from") (value ,(or from-d ""))))
+         (input (@ (type "date") (name "to")   (value ,(or to-d ""))))
+         (select (@ (name "topic") (multiple #t) (size "3")
+                    (class "tracker-topic-select"))
+           ,@(map (lambda (t)
+                    (let ((tid (row-field t "id")))
+                      `(option (@ (value ,tid)
+                                  (selected
+                                   ,(if (member tid topics-selected string=?) #t #f)))
+                               ,(row-field t "name"))))
+                  topics))
+         (button (@ (type "submit")) "Apply")
+         (a (@ (class "admin-link") (href "/tracker/topics")) "topics")))
 
-    (define (render-summary out totals per-topic)
-      ;; Always renders the header so the user sees "Today: 0:00h" on an
-      ;; empty day instead of having the section silently disappear.
+    (define (summary-sxml totals per-topic)
       (let* ((total-mins (or (string->number
                                (row-field totals "total_minutes")) 0))
-             (n-entries  (row-field totals "n_entries")))
-        (out! out "<section class=\"tracker-summary\">"
-                  "<h2>Today <span class=\"total\">"
-                  (html-escape (format-minutes total-mins))
-                  " across " (html-escape n-entries)
-                  (cond ((equal? n-entries "1") " entry")
-                        (else " entries"))
-                  "</span></h2>")
-        (cond
-          ((null? per-topic) #t)
-          (else
-           (out! out "<ul class=\"tracker-summary-list\">")
-           (for-each
-             (lambda (s)
-               (let ((mins (or (string->number
-                                 (row-field s "total_minutes")) 0))
-                     (n    (row-field s "entries")))
-                 (out! out "<li><span class=\"topic\">"
-                           (html-escape (row-field s "topic"))
-                           "</span><span class=\"mins\">"
-                           (html-escape (format-minutes mins))
-                           "</span><span class=\"count\">"
-                           (html-escape n)
-                           "&nbsp;entr.</span></li>")))
-             per-topic)
-           (out! out "</ul>")))
-        (out! out "</section>")))
+             (n-entries  (row-field totals "n_entries"))
+             (entry-word (cond ((equal? n-entries "1") " entry")
+                               (else " entries"))))
+        `(section (@ (class "tracker-summary"))
+           (h2 "Today "
+               (span (@ (class "total"))
+                     ,(format-minutes total-mins)
+                     " across " ,n-entries ,entry-word))
+           ,@(cond
+               ((null? per-topic) '())
+               (else
+                `((ul (@ (class "tracker-summary-list"))
+                    ,@(map
+                       (lambda (s)
+                         (let ((mins (or (string->number
+                                           (row-field s "total_minutes")) 0)))
+                           `(li (span (@ (class "topic"))
+                                      ,(row-field s "topic"))
+                                (span (@ (class "mins"))
+                                      ,(format-minutes mins))
+                                (span (@ (class "count"))
+                                      ,(row-field s "entries")
+                                      ,(raw "&nbsp;") "entr."))))
+                       per-topic))))))))
 
-    (define (render-quick-add out topics prefill)
-      ;; prefill is an alist (possibly empty) with keys 'text, 'minutes,
-      ;; 'topics, 'when — strings ready to drop into the form values.
+    (define (quick-add-sxml topics prefill)
+      ;; prefill is an alist with keys 'text, 'minutes, 'topics, 'when.
       (let ((pf-text    (or (and prefill (assq-ref prefill 'text))    ""))
             (pf-minutes (or (and prefill (assq-ref prefill 'minutes)) ""))
             (pf-topics  (or (and prefill (assq-ref prefill 'topics))  ""))
             (pf-when    (or (and prefill (assq-ref prefill 'when))    "")))
-        (out! out "<form method=\"post\" action=\"/tracker\" "
-                  "class=\"feed-new tracker-add\" data-tracker-add>"
-                  "<h2>Add</h2>"
-                  "<label class=\"tracker-what\">What "
-                  "<textarea name=\"text\" required maxlength=\"1000\" "
-                  "rows=\"3\" autofocus "
-                  "placeholder=\"What did you do? Prefixes: +topic / -topic, "
-                  "!90m or !1:30, 20260616-1000\">"
-                  (html-escape pf-text)
-                  "</textarea></label>"
-                  "<label>Duration "
-                  "<input type=\"text\" name=\"minutes\" required "
-                  "placeholder=\"90, 1:30, 45m\" value=\""
-                  (html-attr-escape pf-minutes) "\"></label>"
-                  "<label>Topics "
-                  "<input type=\"text\" name=\"topics\" "
-                  "placeholder=\"comma, separated\" list=\"tracker-topics-list\" "
-                  "value=\"" (html-attr-escape pf-topics) "\">"
-                  "</label>"
-                  "<datalist id=\"tracker-topics-list\">")
-        (for-each
-          (lambda (t)
-            (out! out "<option value=\""
-                      (html-attr-escape (row-field t "name")) "\">"))
-          topics)
-        (out! out "</datalist>"
-                  "<label>When (optional) "
-                  "<input type=\"datetime-local\" name=\"completed\" value=\""
-                  (html-attr-escape pf-when) "\"></label>"
-                  "<button type=\"submit\">Log it</button>"
-                  "</form>")))
+        `(form (@ (method "post") (action "/tracker")
+                  (class "feed-new tracker-add") (data-tracker-add #t))
+           (h2 "Add")
+           (label (@ (class "tracker-what")) "What "
+             (textarea (@ (name "text") (required #t) (maxlength "1000")
+                          (rows "3") (autofocus #t)
+                          (placeholder
+                           "What did you do? Prefixes: +topic / -topic, !90m or !1:30, 20260616-1000"))
+               ,pf-text))
+           (label "Duration "
+             (input (@ (type "text") (name "minutes") (required #t)
+                       (placeholder "90, 1:30, 45m")
+                       (value ,pf-minutes))))
+           (label "Topics "
+             (input (@ (type "text") (name "topics")
+                       (placeholder "comma, separated")
+                       (list "tracker-topics-list")
+                       (value ,pf-topics))))
+           (datalist (@ (id "tracker-topics-list"))
+             ,@(map (lambda (t)
+                      `(option (@ (value ,(row-field t "name")))))
+                    topics))
+           (label "When (optional) "
+             (input (@ (type "datetime-local") (name "completed")
+                       (value ,pf-when))))
+           (button (@ (type "submit")) "Log it"))))
 
     (define (assq-ref alist key)
       (let ((p (assq key alist))) (cond (p (cdr p)) (else #f))))
 
-    (define (render-list out entries)
+    (define (entry-row-sxml e)
+      (let ((id     (row-field e "id"))
+            (text   (row-field e "text"))
+            (tops   (row-field e "topics"))
+            (mins   (or (string->number (row-field e "minutes")) 0))
+            (when-s (row-field e "completed")))
+        `(tr
+           (td (@ (class "when")) ,when-s)
+           (td ,text)
+           (td (@ (class "topics")) ,tops)
+           (td (@ (class "r")) ,(format-minutes mins))
+           (td (@ (class "acts"))
+               (form (@ (method "post")
+                        (action ,(string-append "/tracker/" id "/edit"))
+                        (class "inline"))
+                 (button (@ (class "linkish")) "edit"))
+               " "
+               (form (@ (method "post")
+                        (action ,(string-append "/tracker/" id "/delete"))
+                        (class "inline")
+                        (data-confirm "Delete this entry?"))
+                 (button (@ (class "linkish danger")) "delete"))))))
+
+    (define (entry-list-sxml entries)
       (cond
-        ((null? entries)
-         (out! out "<p class=\"empty\">Nothing matches.</p>"))
+        ((null? entries) `(p (@ (class "empty")) "Nothing matches."))
         (else
-         (out! out "<table class=\"tracker-list mobile-cards\"><thead><tr>"
-                   "<th>when</th><th>what</th><th>topics</th>"
-                   "<th class=\"r\">duration</th><th></th>"
-                   "</tr></thead><tbody>")
-         (for-each
-           (lambda (e)
-             (let ((id   (row-field e "id"))
-                   (text (row-field e "text"))
-                   (tops (row-field e "topics"))
-                   (mins (or (string->number
-                               (row-field e "minutes")) 0))
-                   (when-s (row-field e "completed")))
-               (out! out "<tr>"
-                         "<td class=\"when\">" (html-escape when-s) "</td>"
-                         "<td>" (html-escape text) "</td>"
-                         "<td class=\"topics\">" (html-escape tops) "</td>"
-                         "<td class=\"r\">"
-                         (html-escape (format-minutes mins)) "</td>"
-                         "<td class=\"acts\">"
-                         "<form method=\"post\" action=\"/tracker/"
-                         (html-attr-escape id)
-                         "/edit\" class=\"inline\">"
-                         "<button class=\"linkish\">edit</button>"
-                         "</form> "
-                         "<form method=\"post\" action=\"/tracker/"
-                         (html-attr-escape id)
-                         "/delete\" class=\"inline\" "
-                         "data-confirm=\"Delete this entry?\">"
-                         "<button class=\"linkish danger\">delete</button>"
-                         "</form></td></tr>")))
-           entries)
-         (out! out "</tbody></table>"))))
+         `(table (@ (class "tracker-list mobile-cards"))
+            (thead (tr (th "when") (th "what") (th "topics")
+                       (th (@ (class "r")) "duration") (th)))
+            (tbody ,@(map entry-row-sxml entries))))))
 
     (define (render-main req auth cfg q topics-selected from-d to-d all? prefill)
       (let* ((all-topics (list-topics cfg #t))
@@ -527,29 +506,39 @@
                                        from-d to-d apply-window? 500))
              (totals     (summary-totals cfg))
              (per-topic  (summary-by-topic cfg))
-             (out        (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Tracker</h1>"
-                  "<a class=\"admin-link\" href=\"/tracker/export.csv?"
-                  (html-attr-escape (export-query q topics-selected from-d to-d all?))
-                  "\">export CSV</a></header>")
-        (render-filters out q topics-selected from-d to-d active)
-        (render-quick-add out active prefill)
-        (render-summary out totals per-topic)
-        (cond
-          (apply-window?
-           (out! out "<p class=\"tracker-window-note\">Showing last "
-                     (number->string default-list-window-days)
-                     " days. <a href=\"/tracker?"
-                     (html-attr-escape
-                       (export-query q topics-selected from-d to-d #t))
-                     "\">Show all</a>.</p>")))
-        (render-list out entries)
+             (export-href
+               (string-append "/tracker/export.csv?"
+                              (export-query q topics-selected from-d to-d all?)))
+             (window-note
+               (cond
+                 (apply-window?
+                  `(p (@ (class "tracker-window-note"))
+                      "Showing last "
+                      ,(number->string default-list-window-days)
+                      " days. "
+                      (a (@ (href ,(string-append
+                                     "/tracker?"
+                                     (export-query q topics-selected
+                                                   from-d to-d #t))))
+                         "Show all")
+                      "."))
+                 (else "")))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Tracker")
+                   (a (@ (class "admin-link") (href ,export-href))
+                      "export CSV"))
+                 ,(filters-sxml q topics-selected from-d to-d active)
+                 ,(quick-add-sxml active prefill)
+                 ,(summary-sxml totals per-topic)
+                 ,window-note
+                 ,(entry-list-sxml entries))))
         (html-response
           (render-page req auth
                        '((title  . "Tracker")
                          (active . tracker)
                          (body-class . "feeds-page"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     (define (export-query q topics-selected from-d to-d all?)
       ;; Builds a query-string preserving the current filters for the CSV
@@ -569,54 +558,47 @@
           (set! parts (cons "all=1" parts)))
         (string-join (reverse parts) "&")))
 
+    (define (topic-row-sxml t)
+      (let* ((id   (row-field t "id"))
+             (name (row-field t "name"))
+             (arch (row-field t "archived"))
+             (archived? (string=? arch "yes")))
+        `(tr (@ (class ,(if archived? "disabled" #f)))
+           (td ,name)
+           (td ,(if archived? "archived" "active"))
+           (td (@ (class "acts"))
+               (form (@ (method "post")
+                        (action ,(string-append "/tracker/topics/" id "/archive"))
+                        (class "inline"))
+                 (button (@ (class "linkish"))
+                   ,(if archived? "unarchive" "archive")))
+               " "
+               (form (@ (method "post")
+                        (action ,(string-append "/tracker/topics/" id "/delete"))
+                        (class "inline")
+                        (data-confirm "Delete this topic? Only allowed if no entries reference it."))
+                 (button (@ (class "linkish danger")) "delete"))))))
+
     (define (render-topics-admin req auth cfg)
-      (let ((topics (list-topics cfg #t))
-            (out    (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Tracker topics</h1>"
-                  "<a href=\"/tracker\">← back</a></header>"
-                  "<form method=\"post\" action=\"/tracker/topics\" "
-                  "class=\"skip-new inline\">"
-                  "<input type=\"text\" name=\"name\" required "
-                  "placeholder=\"new topic\">"
-                  "<button type=\"submit\">Add</button>"
-                  "</form>"
-                  "<table class=\"feed-table\"><thead><tr>"
-                  "<th>name</th><th>status</th><th></th>"
-                  "</tr></thead><tbody>")
-        (for-each
-          (lambda (t)
-            (let ((id   (row-field t "id"))
-                  (name (row-field t "name"))
-                  (arch (row-field t "archived")))
-              (out! out "<tr"
-                        (cond ((string=? arch "yes") " class=\"disabled\"")
-                              (else "")) ">"
-                        "<td>" (html-escape name) "</td>"
-                        "<td>"
-                        (cond ((string=? arch "yes") "archived")
-                              (else "active"))
-                        "</td>"
-                        "<td class=\"acts\">"
-                        "<form method=\"post\" action=\"/tracker/topics/"
-                        (html-attr-escape id) "/archive\" class=\"inline\">"
-                        "<button class=\"linkish\">"
-                        (cond ((string=? arch "yes") "unarchive")
-                              (else "archive"))
-                        "</button></form> "
-                        "<form method=\"post\" action=\"/tracker/topics/"
-                        (html-attr-escape id) "/delete\" class=\"inline\" "
-                        "data-confirm=\"Delete this topic? "
-                        "Only allowed if no entries reference it.\">"
-                        "<button class=\"linkish danger\">delete</button>"
-                        "</form></td></tr>")))
-          topics)
-        (out! out "</tbody></table>")
+      (let* ((topics (list-topics cfg #t))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Tracker topics")
+                   (a (@ (href "/tracker")) ,(raw "← back")))
+                 (form (@ (method "post") (action "/tracker/topics")
+                          (class "skip-new inline"))
+                   (input (@ (type "text") (name "name") (required #t)
+                             (placeholder "new topic")))
+                   (button (@ (type "submit")) "Add"))
+                 (table (@ (class "feed-table"))
+                   (thead (tr (th "name") (th "status") (th)))
+                   (tbody ,@(map topic-row-sxml topics))))))
         (html-response
           (render-page req auth
                        '((title  . "Tracker topics")
                          (active . tracker)
                          (body-class . "feeds-page"))
-                       (get-output-string out)))))
+                       (html->string body)))))
 
     ;; ============================================================
     ;; Routes

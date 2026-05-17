@@ -8,7 +8,7 @@
           (scm net http response)
           (scm net http route)
           (scm net http forms)
-          (scm html)
+          (scm html builder)
           (dabsite db)
           (dabsite auth)
           (dabsite views))
@@ -312,72 +312,140 @@
     ;; Views
     ;; ============================================================
 
-    (define (page out req auth title active body-html)
+    (define (page-sxml req auth title active body)
       (html-response
         (render-page req auth
                      (list (cons 'title title)
                            (cons 'active active)
                            (cons 'body-class "feeds-page"))
-                     body-html)))
+                     (html->string body))))
 
     ;; ---- landing ----
 
-    (define (render-landing req auth cfg)
-      (let ((lists (list-lists cfg))
-            (shops (list-shops cfg))
-            (out   (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Grocery</h1>"
-                  "<a class=\"admin-link\" href=\"/grocery/items\">items</a> "
-                  "<a class=\"admin-link\" href=\"/grocery/shops\">shops</a>"
-                  "</header>")
-        ;; new list
-        (out! out "<form method=\"post\" action=\"/grocery/lists\" "
-                  "class=\"grocery-newlist\">"
-                  "<label>Shop "
-                  "<select name=\"shop\">"
-                  "<option value=\"\">default (alphabetical)</option>")
-        (for-each
-          (lambda (s)
-            (out! out "<option value=\"" (html-attr-escape (row-field s "id"))
-                      "\">" (html-escape (row-field s "name")) "</option>"))
-          shops)
-        (out! out "</select></label>"
-                  "<button type=\"submit\">New list</button></form>")
+    (define (list-row-sxml l)
+      (let ((id     (row-field l "id"))
+            (shop   (row-field l "shop_name"))
+            (n-all  (row-field l "n_entries"))
+            (n-open (row-field l "n_open"))
+            (when-s (row-field l "created")))
+        `(li
+           (a (@ (class "row")
+                 (href ,(string-append "/grocery/lists/" id)))
+              (span (@ (class "name")) ,shop)
+              (span (@ (class "meta"))
+                    ,n-open " open · " ,n-all " total · " ,when-s))
+           " "
+           (form (@ (method "post")
+                    (action ,(string-append "/grocery/lists/" id "/delete"))
+                    (class "inline rm")
+                    (data-confirm "Delete this list?"))
+             (button (@ (class "linkish danger")) "delete")))))
 
-        (cond
-          ((null? lists)
-           (out! out "<p class=\"empty\">No shopping lists yet.</p>"))
-          (else
-           (out! out "<ul class=\"grocery-lists\">")
-           (for-each
-             (lambda (l)
-               (let ((id     (row-field l "id"))
-                     (shop   (row-field l "shop_name"))
-                     (n-all  (row-field l "n_entries"))
-                     (n-open (row-field l "n_open"))
-                     (when-s (row-field l "created")))
-                 (out! out "<li><a class=\"row\" href=\"/grocery/lists/"
-                           (html-attr-escape id) "\">"
-                           "<span class=\"name\">" (html-escape shop) "</span>"
-                           "<span class=\"meta\">"
-                           (html-escape n-open) " open · "
-                           (html-escape n-all) " total · "
-                           (html-escape when-s)
-                           "</span></a>"
-                           " <form method=\"post\" action=\"/grocery/lists/"
-                           (html-attr-escape id)
-                           "/delete\" class=\"inline rm\" "
-                           "data-confirm=\"Delete this list?\">"
-                           "<button class=\"linkish danger\">delete</button>"
-                           "</form></li>")))
-             lists)
-           (out! out "</ul>")))
-        (page out req auth "Grocery" 'grocery (get-output-string out))))
+    (define (render-landing req auth cfg)
+      (let* ((lists (list-lists cfg))
+             (shops (list-shops cfg))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Grocery")
+                   (a (@ (class "admin-link") (href "/grocery/items")) "items")
+                   " "
+                   (a (@ (class "admin-link") (href "/grocery/shops")) "shops"))
+                 (form (@ (method "post") (action "/grocery/lists")
+                          (class "grocery-newlist"))
+                   (label "Shop "
+                     (select (@ (name "shop"))
+                       (option (@ (value "")) "default (alphabetical)")
+                       ,@(map (lambda (s)
+                                `(option (@ (value ,(row-field s "id")))
+                                         ,(row-field s "name")))
+                              shops)))
+                   (button (@ (type "submit")) "New list"))
+                 ,(cond
+                    ((null? lists)
+                     `(p (@ (class "empty")) "No shopping lists yet."))
+                    (else
+                     `(ul (@ (class "grocery-lists"))
+                          ,@(map list-row-sxml lists)))))))
+        (page-sxml req auth "Grocery" 'grocery body)))
 
     ;; ---- one list ----
 
+    (define (entry-sxml list-id e)
+      (let* ((eid    (row-field e "id"))
+             (name   (row-field e "name"))
+             (qty    (or (string->number (row-field e "qty")) 1))
+             (bought (string=? (row-field e "bought") "yes"))
+             (lid    (number->string list-id))
+             (action-base (string-append "/grocery/lists/" lid "/entries/" eid)))
+        `(li (@ (class ,(if bought "bought" "open")))
+           (form (@ (method "post")
+                    (action ,(string-append action-base "/toggle"))
+                    (class "inline toggle"))
+             (button (@ (type "submit") (class "shop-toggle"))
+               (span (@ (class "check") (aria-hidden "true"))
+                     ,(raw (if bought "&#x2714;" "&nbsp;")))
+               (span (@ (class "name"))
+                     ,name
+                     ,@(cond ((> qty 1)
+                              `(" " (span (@ (class "qty"))
+                                          ,(string-append
+                                             "×" (number->string qty)))))
+                             (else '())))))
+           (form (@ (method "post")
+                    (action ,(string-append action-base "/dec"))
+                    (class "inline rm"))
+             (button (@ (class "linkish") (title "one less")) "−"))
+           (form (@ (method "post")
+                    (action ,(string-append action-base "/delete"))
+                    (class "inline rm"))
+             (button (@ (class "linkish") (title "remove")) "×")))))
+
+    (define (entries-sxml list-id entries)
+      `(section (@ (class "grocery-list"))
+         (h2 "Shopping list")
+         ,(cond
+            ((null? entries)
+             `(p (@ (class "empty")) "Empty. Tap items below to add."))
+            (else
+             `(ul (@ (class "grocery-shopping"))
+                  ,@(map (lambda (e) (entry-sxml list-id e)) entries))))))
+
+    (define (catalog-item-sxml list-id entry-by-item i)
+      (let* ((id   (row-field i "id"))
+             (name (row-field i "name"))
+             (e    (assoc id entry-by-item))
+             (qty  (cond
+                     (e (or (string->number (row-field (cdr e) "qty")) 0))
+                     (else 0)))
+             (lid  (number->string list-id)))
+        `(li (form (@ (method "post")
+                      (action ,(string-append "/grocery/lists/" lid "/add/" id))
+                      (class "inline add"))
+               (button (@ (type "submit") (class "add-btn"))
+                 "+ " (span (@ (class "name")) ,name)
+                 ,@(cond ((> qty 0)
+                          `(" " (span (@ (class "qty"))
+                                      ,(string-append "·" (number->string qty)))))
+                         (else '())))))))
+
+    (define (catalog-sxml list-id catalog entry-by-item)
+      `(section (@ (class "grocery-catalog"))
+         (h2 "Add items")
+         ,(cond
+            ((null? catalog)
+             `(p (@ (class "empty"))
+                 "This shop has no items yet. "
+                 "Add some on the "
+                 (a (@ (href "/grocery/shops")) "shops")
+                 " page."))
+            (else
+             `(ul (@ (class "grocery-items"))
+                  ,@(map (lambda (i)
+                           (catalog-item-sxml list-id entry-by-item i))
+                         catalog))))))
+
     (define (render-list req auth cfg list-id)
-      (let* ((l (find-list cfg list-id)))
+      (let ((l (find-list cfg list-id)))
         (cond
           ((not l) (render-error 404 "List not found."))
           (else
@@ -392,176 +460,121 @@
                           (set! h (cons (cons (row-field e "item_id") e) h)))
                         entries)
                       h))
-                  (out (open-output-string)))
-             (out! out "<header class=\"feeds-head\">"
-                       "<h1>" (html-escape (row-field l "shop_name")) "</h1>"
-                       " <a class=\"admin-link\" href=\"/grocery\">← lists</a>"
-                       " <form method=\"post\" action=\"/grocery/lists/"
-                       (html-attr-escape (number->string list-id))
-                       "/clear-bought\" class=\"inline\">"
-                       "<button class=\"linkish\">remove bought</button>"
-                       "</form>"
-                       " <form method=\"post\" action=\"/grocery/lists/"
-                       (html-attr-escape (number->string list-id))
-                       "/delete\" class=\"inline\" "
-                       "data-confirm=\"Delete this list?\">"
-                       "<button class=\"linkish danger\">delete list</button>"
-                       "</form></header>")
-             (render-entries out list-id entries)
-             (render-catalog out list-id catalog entry-by-item-id)
-             (page out req auth "Grocery" 'grocery (get-output-string out)))))))
-
-    (define (render-entries out list-id entries)
-      (out! out "<section class=\"grocery-list\">"
-                "<h2>Shopping list</h2>")
-      (cond
-        ((null? entries)
-         (out! out "<p class=\"empty\">Empty. Tap items below to add.</p>"))
-        (else
-         (out! out "<ul class=\"grocery-shopping\">")
-         (for-each
-           (lambda (e)
-             (let* ((eid    (row-field e "id"))
-                    (name   (row-field e "name"))
-                    (qty    (or (string->number (row-field e "qty")) 1))
-                    (bought (string=? (row-field e "bought") "yes")))
-               (out! out "<li class=\""
-                         (cond (bought "bought") (else "open")) "\">"
-                         "<form method=\"post\" action=\"/grocery/lists/"
-                         (html-attr-escape (number->string list-id))
-                         "/entries/" (html-attr-escape eid)
-                         "/toggle\" class=\"inline toggle\">"
-                         "<button type=\"submit\" class=\"shop-toggle\">"
-                         "<span class=\"check\" aria-hidden=\"true\">"
-                         (cond (bought "&#x2714;") (else "&nbsp;")) "</span>"
-                         "<span class=\"name\">" (html-escape name)
-                         (cond ((> qty 1)
-                                (string-append " <span class=\"qty\">×"
-                                               (number->string qty)
-                                               "</span>"))
-                               (else ""))
-                         "</span></button></form>"
-                         "<form method=\"post\" action=\"/grocery/lists/"
-                         (html-attr-escape (number->string list-id))
-                         "/entries/" (html-attr-escape eid)
-                         "/dec\" class=\"inline rm\">"
-                         "<button class=\"linkish\" title=\"one less\">−</button>"
-                         "</form>"
-                         "<form method=\"post\" action=\"/grocery/lists/"
-                         (html-attr-escape (number->string list-id))
-                         "/entries/" (html-attr-escape eid)
-                         "/delete\" class=\"inline rm\">"
-                         "<button class=\"linkish\" title=\"remove\">×</button>"
-                         "</form>"
-                         "</li>")))
-           entries)
-         (out! out "</ul>")))
-      (out! out "</section>"))
-
-    (define (render-catalog out list-id catalog entry-by-item)
-      (out! out "<section class=\"grocery-catalog\">"
-                "<h2>Add items</h2>")
-      (cond
-        ((null? catalog)
-         (out! out "<p class=\"empty\">This shop has no items yet. "
-                   "Add some on the <a href=\"/grocery/shops\">shops</a> page.</p>"))
-        (else
-         (out! out "<ul class=\"grocery-items\">")
-         (for-each
-           (lambda (i)
-             (let* ((id   (row-field i "id"))
-                    (name (row-field i "name"))
-                    (e    (assoc id entry-by-item))
-                    (qty  (cond
-                            (e (or (string->number
-                                     (row-field (cdr e) "qty")) 0))
-                            (else 0))))
-               (out! out "<li>"
-                         "<form method=\"post\" action=\"/grocery/lists/"
-                         (html-attr-escape (number->string list-id))
-                         "/add/" (html-attr-escape id)
-                         "\" class=\"inline add\">"
-                         "<button type=\"submit\" class=\"add-btn\">"
-                         "+ <span class=\"name\">" (html-escape name) "</span>"
-                         (cond ((> qty 0)
-                                (string-append
-                                  " <span class=\"qty\">·" (number->string qty)
-                                  "</span>"))
-                               (else ""))
-                         "</button></form>"
-                         "</li>")))
-           catalog)
-         (out! out "</ul>")))
-      (out! out "</section>"))
+                  (lid (number->string list-id))
+                  (body
+                    `((header (@ (class "feeds-head"))
+                        (h1 ,(row-field l "shop_name"))
+                        " "
+                        (a (@ (class "admin-link") (href "/grocery"))
+                           ,(raw "← lists"))
+                        " "
+                        (form (@ (method "post")
+                                 (action ,(string-append "/grocery/lists/" lid "/clear-bought"))
+                                 (class "inline"))
+                          (button (@ (class "linkish")) "remove bought"))
+                        " "
+                        (form (@ (method "post")
+                                 (action ,(string-append "/grocery/lists/" lid "/delete"))
+                                 (class "inline")
+                                 (data-confirm "Delete this list?"))
+                          (button (@ (class "linkish danger")) "delete list")))
+                      ,(entries-sxml list-id entries)
+                      ,(catalog-sxml list-id catalog entry-by-item-id))))
+             (page-sxml req auth "Grocery" 'grocery body))))))
 
     ;; ---- items admin ----
 
+    (define (item-row-sxml i)
+      (let ((id   (row-field i "id"))
+            (name (row-field i "name")))
+        `(li (span (@ (class "add-btn static")) ,name)
+             (form (@ (method "post")
+                      (action ,(string-append "/grocery/items/" id "/delete"))
+                      (class "inline rm")
+                      (data-confirm "Delete this item from the catalog?"))
+               (button (@ (class "linkish") (title "delete")) "×")))))
+
     (define (render-items req auth cfg)
-      (let ((items (list-items cfg))
-            (out   (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Items</h1>"
-                  "<a class=\"admin-link\" href=\"/grocery\">← back</a>"
-                  "</header>"
-                  "<form method=\"post\" action=\"/grocery/items\" "
-                  "class=\"grocery-new\">"
-                  "<input type=\"text\" name=\"name\" required maxlength=\"100\" "
-                  "placeholder=\"new item\" autofocus>"
-                  "<button type=\"submit\">Add</button>"
-                  "</form>")
-        (cond
-          ((null? items)
-           (out! out "<p class=\"empty\">No items yet.</p>"))
-          (else
-           (out! out "<ul class=\"grocery-items\">")
-           (for-each
-             (lambda (i)
-               (let ((id   (row-field i "id"))
-                     (name (row-field i "name")))
-                 (out! out "<li><span class=\"add-btn static\">"
-                           (html-escape name) "</span>"
-                           "<form method=\"post\" action=\"/grocery/items/"
-                           (html-attr-escape id) "/delete\" class=\"inline rm\" "
-                           "data-confirm=\"Delete this item from the catalog?\">"
-                           "<button class=\"linkish\" title=\"delete\">×</button>"
-                           "</form></li>")))
-             items)
-           (out! out "</ul>")))
-        (page out req auth "Items" 'grocery (get-output-string out))))
+      (let* ((items (list-items cfg))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Items")
+                   (a (@ (class "admin-link") (href "/grocery"))
+                      ,(raw "← back")))
+                 (form (@ (method "post") (action "/grocery/items")
+                          (class "grocery-new"))
+                   (input (@ (type "text") (name "name") (required #t)
+                             (maxlength "100") (placeholder "new item")
+                             (autofocus #t)))
+                   (button (@ (type "submit")) "Add"))
+                 ,(cond
+                    ((null? items)
+                     `(p (@ (class "empty")) "No items yet."))
+                    (else
+                     `(ul (@ (class "grocery-items"))
+                          ,@(map item-row-sxml items)))))))
+        (page-sxml req auth "Items" 'grocery body)))
 
     ;; ---- shops admin ----
 
+    (define (shop-row-sxml s)
+      (let ((id   (row-field s "id"))
+            (name (row-field s "name")))
+        `(li (a (@ (class "add-btn")
+                   (href ,(string-append "/grocery/shops/" id)))
+                ,name " — edit order")
+             (form (@ (method "post")
+                      (action ,(string-append "/grocery/shops/" id "/delete"))
+                      (class "inline rm")
+                      (data-confirm "Delete this shop and its lists?"))
+               (button (@ (class "linkish") (title "delete")) "×")))))
+
     (define (render-shops req auth cfg)
-      (let ((shops (list-shops cfg))
-            (out   (open-output-string)))
-        (out! out "<header class=\"feeds-head\"><h1>Shops</h1>"
-                  "<a class=\"admin-link\" href=\"/grocery\">← back</a>"
-                  "</header>"
-                  "<form method=\"post\" action=\"/grocery/shops\" "
-                  "class=\"grocery-new\">"
-                  "<input type=\"text\" name=\"name\" required maxlength=\"60\" "
-                  "placeholder=\"new shop\">"
-                  "<button type=\"submit\">Add</button>"
-                  "</form>"
-                  "<ul class=\"grocery-items\">")
-        (out! out "<li><span class=\"add-btn static\">(default)</span>"
-                  "<span class=\"hint\">all items, alphabetical</span></li>")
-        (for-each
-          (lambda (s)
-            (let ((id   (row-field s "id"))
-                  (name (row-field s "name")))
-              (out! out "<li><a class=\"add-btn\" href=\"/grocery/shops/"
-                        (html-attr-escape id) "\">"
-                        (html-escape name) " — edit order</a>"
-                        "<form method=\"post\" action=\"/grocery/shops/"
-                        (html-attr-escape id) "/delete\" class=\"inline rm\" "
-                        "data-confirm=\"Delete this shop and its lists?\">"
-                        "<button class=\"linkish\" title=\"delete\">×</button>"
-                        "</form></li>")))
-          shops)
-        (out! out "</ul>")
-        (page out req auth "Shops" 'grocery (get-output-string out))))
+      (let* ((shops (list-shops cfg))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Shops")
+                   (a (@ (class "admin-link") (href "/grocery"))
+                      ,(raw "← back")))
+                 (form (@ (method "post") (action "/grocery/shops")
+                          (class "grocery-new"))
+                   (input (@ (type "text") (name "name") (required #t)
+                             (maxlength "60") (placeholder "new shop")))
+                   (button (@ (type "submit")) "Add"))
+                 (ul (@ (class "grocery-items"))
+                   (li (span (@ (class "add-btn static")) "(default)")
+                       (span (@ (class "hint"))
+                             "all items, alphabetical"))
+                   ,@(map shop-row-sxml shops)))))
+        (page-sxml req auth "Shops" 'grocery body)))
 
     ;; ---- one shop's order ----
+
+    (define (shop-item-row-sxml sid iid name)
+      (let ((base (string-append "/grocery/shops/" sid "/items/" iid)))
+        `(li (@ (data-item-id ,iid))
+           (button (@ (type "button") (class "drag-handle")
+                      (aria-label "drag to reorder")) "⠿")
+           (span (@ (class "name")) ,name)
+           (form (@ (method "post") (action ,(string-append base "/up"))
+                    (class "inline no-drag"))
+             (button (@ (class "linkish") (title "up")) "↑"))
+           (form (@ (method "post") (action ,(string-append base "/down"))
+                    (class "inline no-drag"))
+             (button (@ (class "linkish") (title "down")) "↓"))
+           (form (@ (method "post") (action ,(string-append base "/remove"))
+                    (class "inline rm"))
+             (button (@ (class "linkish") (title "remove")) "×")))))
+
+    (define (shop-available-row-sxml sid i)
+      (let ((iid  (row-field i "id"))
+            (name (row-field i "name")))
+        `(li (form (@ (method "post")
+                      (action ,(string-append "/grocery/shops/" sid
+                                              "/items/" iid "/add"))
+                      (class "inline add"))
+               (button (@ (type "submit") (class "add-btn"))
+                 "+ " (span (@ (class "name")) ,name))))))
 
     (define (render-shop req auth cfg shop-id)
       (let ((s (find-shop cfg shop-id)))
@@ -570,83 +583,45 @@
           (else
            (let* ((in-shop (shop-items cfg shop-id))
                   (others  (items-not-in-shop cfg shop-id))
-                  (out     (open-output-string)))
-             (out! out "<header class=\"feeds-head\">"
-                       "<h1>" (html-escape (row-field s "name")) "</h1>"
-                       " <a class=\"admin-link\" href=\"/grocery/shops\">← shops</a>"
-                       "</header>"
-                       "<form method=\"post\" action=\"/grocery/shops/"
-                       (html-attr-escape (number->string shop-id))
-                       "/rename\" class=\"grocery-new\">"
-                       "<input type=\"text\" name=\"name\" required "
-                       "maxlength=\"60\" value=\""
-                       (html-attr-escape (row-field s "name"))
-                       "\"><button type=\"submit\">Rename</button></form>")
-             ;; ordered items
-             (out! out "<section class=\"grocery-list\"><h2>Items in shop order</h2>")
-             (cond
-               ((null? in-shop)
-                (out! out "<p class=\"empty\">No items yet. Add from below.</p>"))
-               (else
-                (out! out "<ul class=\"grocery-order\" data-shop-id=\""
-                          (html-attr-escape (number->string shop-id)) "\">")
-                (for-each
-                  (lambda (i)
-                    (let ((iid  (row-field i "id"))
-                          (name (row-field i "name")))
-                      (out! out "<li data-item-id=\""
-                                (html-attr-escape iid) "\">"
-                                "<button type=\"button\" class=\"drag-handle\" "
-                                "aria-label=\"drag to reorder\">⠿</button>"
-                                "<span class=\"name\">"
-                                (html-escape name) "</span>"
-                                "<form method=\"post\" action=\"/grocery/shops/"
-                                (html-attr-escape (number->string shop-id))
-                                "/items/" (html-attr-escape iid)
-                                "/up\" class=\"inline no-drag\">"
-                                "<button class=\"linkish\" title=\"up\">↑</button>"
-                                "</form>"
-                                "<form method=\"post\" action=\"/grocery/shops/"
-                                (html-attr-escape (number->string shop-id))
-                                "/items/" (html-attr-escape iid)
-                                "/down\" class=\"inline no-drag\">"
-                                "<button class=\"linkish\" title=\"down\">↓</button>"
-                                "</form>"
-                                "<form method=\"post\" action=\"/grocery/shops/"
-                                (html-attr-escape (number->string shop-id))
-                                "/items/" (html-attr-escape iid)
-                                "/remove\" class=\"inline rm\">"
-                                "<button class=\"linkish\" title=\"remove\">×</button>"
-                                "</form>"
-                                "</li>")))
-                  in-shop)
-                (out! out "</ul>")))
-             (out! out "</section>")
-             ;; available items to add
-             (out! out "<section class=\"grocery-catalog\"><h2>Available items</h2>")
-             (cond
-               ((null? others)
-                (out! out "<p class=\"empty\">All catalog items are in this shop.</p>"))
-               (else
-                (out! out "<ul class=\"grocery-items\">")
-                (for-each
-                  (lambda (i)
-                    (let ((iid  (row-field i "id"))
-                          (name (row-field i "name")))
-                      (out! out "<li>"
-                                "<form method=\"post\" action=\"/grocery/shops/"
-                                (html-attr-escape (number->string shop-id))
-                                "/items/" (html-attr-escape iid)
-                                "/add\" class=\"inline add\">"
-                                "<button type=\"submit\" class=\"add-btn\">"
-                                "+ <span class=\"name\">"
-                                (html-escape name) "</span></button></form>"
-                                "</li>")))
-                  others)
-                (out! out "</ul>")))
-             (out! out "</section>")
-             (page out req auth "Shop order" 'grocery
-                   (get-output-string out)))))))
+                  (sid     (number->string shop-id))
+                  (body
+                    `((header (@ (class "feeds-head"))
+                        (h1 ,(row-field s "name"))
+                        " "
+                        (a (@ (class "admin-link") (href "/grocery/shops"))
+                           ,(raw "← shops")))
+                      (form (@ (method "post")
+                               (action ,(string-append "/grocery/shops/" sid "/rename"))
+                               (class "grocery-new"))
+                        (input (@ (type "text") (name "name") (required #t)
+                                  (maxlength "60") (value ,(row-field s "name"))))
+                        (button (@ (type "submit")) "Rename"))
+                      (section (@ (class "grocery-list"))
+                        (h2 "Items in shop order")
+                        ,(cond
+                           ((null? in-shop)
+                            `(p (@ (class "empty"))
+                                "No items yet. Add from below."))
+                           (else
+                            `(ul (@ (class "grocery-order") (data-shop-id ,sid))
+                                 ,@(map (lambda (i)
+                                          (shop-item-row-sxml
+                                            sid
+                                            (row-field i "id")
+                                            (row-field i "name")))
+                                        in-shop)))))
+                      (section (@ (class "grocery-catalog"))
+                        (h2 "Available items")
+                        ,(cond
+                           ((null? others)
+                            `(p (@ (class "empty"))
+                                "All catalog items are in this shop."))
+                           (else
+                            `(ul (@ (class "grocery-items"))
+                                 ,@(map (lambda (i)
+                                          (shop-available-row-sxml sid i))
+                                        others))))))))
+             (page-sxml req auth "Shop order" 'grocery body))))))
 
     ;; ============================================================
     ;; Routes
