@@ -58,6 +58,8 @@
 (define auth
   (make-auth cookie-name cookie-secret cookie-max-age auth-passphrase-hash))
 
+(set-site-lang! site-lang)
+
 (serve http-port
        http-host
        (abs-path static-dir)

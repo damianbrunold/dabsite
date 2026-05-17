@@ -20,8 +20,17 @@
           sign-token
           verify-token
           install-auth-routes!
-          require-auth)
+          require-auth
+          site-lang
+          set-site-lang!)
   (begin
+
+    ;; Site-wide default for <html lang="…">. server.scm sets this from
+    ;; config at startup, before any request is served, so the set! is
+    ;; race-free. Pages can override per-render via the 'lang opt.
+    (define %site-lang "en")
+    (define (site-lang) %site-lang)
+    (define (set-site-lang! lang) (set! %site-lang lang))
 
     ;; auth holds everything needed to verify credentials and cookies. The
     ;; passphrase hash is parsed once into (iter . (salt-bv . hash-bv)).
@@ -139,7 +148,7 @@
     (define (login-page-html error?)
       (html->string
         (html5
-          `(@ (lang "en"))
+          `(@ (lang ,(site-lang)))
           `(head (meta (@ (charset "utf-8")))
                  (title "Login")
                  (link (@ (rel "stylesheet") (href "/static/site.css"))))

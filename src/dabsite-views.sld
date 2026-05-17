@@ -19,6 +19,9 @@
     ;;   title         — page <title> (string)
     ;;   active        — symbol identifying the active nav entry: 'home, 'notes
     ;;   body-class    — extra class on <body>
+    ;;   lang          — BCP 47 language tag for <html lang="…">; falls
+    ;;                   back to (site-lang). Use this on pages whose
+    ;;                   primary text differs from the site default.
     ;;
     ;; Pages that still build their body the old way pass a string of
     ;; pre-rendered HTML and we splice it in via (raw …). New pages
@@ -120,6 +123,7 @@
       (let* ((title      (opt-ref opts 'title "Damian Brunold"))
              (active     (opt-ref opts 'active 'home))
              (body-class (opt-ref opts 'body-class #f))
+             (lang       (opt-ref opts 'lang (site-lang)))
              ;; body-html is either a string (legacy, from pages still
              ;; building to a port) or an SXML tree (new style). We
              ;; wrap strings in (raw …) so they pass through unescaped.
@@ -129,7 +133,7 @@
         (string-append
          (html->string
           (html5
-            `(@ (lang "en"))
+            `(@ (lang ,lang))
             `(head
                (meta (@ (charset "utf-8")))
                (meta (@ (name "viewport")

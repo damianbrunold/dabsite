@@ -41,3 +41,8 @@
 ;; behind the reverse proxy must use #t. For local dev over plain HTTP,
 ;; set #f so the browser will store the cookie.
 (define secure-cookies? #f)
+
+;; --- Localisation ---
+;; BCP 47 language tag emitted as <html lang="…"> for the site shell.
+;; Individual pages can override via the 'lang opt to render-page.
+(define site-lang "en")

@@ -116,7 +116,8 @@
              (html-response
                (render-page req auth
                             (list (cons 'title title)
-                                  (cons 'active active))
+                                  (cons 'active active)
+                                  (cons 'lang "de"))
                             (html->string body))))))))
 
     (define (render-edit-view req auth cfg slug)
