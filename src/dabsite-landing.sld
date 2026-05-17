@@ -26,11 +26,8 @@
                      (lambda (c)
                        (pg-result->alist-list
                          (pg-query c
-                           (string-append
-                             "SELECT slug, title, format, source, html_cache "
-                             "FROM pages WHERE slug = "
-                             (pg-quote-literal slug)
-                             " LIMIT 1")))))))
+                           "SELECT slug, title, format, source, html_cache FROM pages WHERE slug = $1 LIMIT 1"
+                           slug))))))
         (if (pair? rows) (car rows) #f)))
 
     (define (list-pages cfg)
@@ -76,18 +73,15 @@
           (lambda (c)
             (pg-exec c
               (string-append
-                "INSERT INTO pages (slug, title, format, source, html_cache, updated_at) VALUES ("
-                (pg-quote-literal slug) ", "
-                (pg-quote-literal title) ", "
-                (pg-quote-literal format) ", "
-                (pg-quote-literal source) ", "
-                (pg-quote-literal html) ", now()) "
+                "INSERT INTO pages (slug, title, format, source, html_cache, updated_at) "
+                "VALUES ($1, $2, $3, $4, $5, now()) "
                 "ON CONFLICT (slug) DO UPDATE SET "
                 "title = EXCLUDED.title, "
                 "format = EXCLUDED.format, "
                 "source = EXCLUDED.source, "
                 "html_cache = EXCLUDED.html_cache, "
-                "updated_at = now()"))))))
+                "updated_at = now()")
+              slug title format source html)))))
 
     (define (cached-or-render cfg page)
       ;; If html_cache is empty (e.g. seeded row), render and persist.
@@ -101,11 +95,8 @@
              (with-db cfg
                (lambda (c)
                  (pg-exec c
-                   (string-append
-                     "UPDATE pages SET html_cache = "
-                     (pg-quote-literal html)
-                     ", updated_at = now() WHERE slug = "
-                     (pg-quote-literal (page-field page "slug"))))))
+                   "UPDATE pages SET html_cache = $1, updated_at = now() WHERE slug = $2"
+                   html (page-field page "slug"))))
              html)))))
 
     ;; --- views ---
@@ -218,10 +209,7 @@
     (define (delete-page! cfg slug)
       (with-db cfg
         (lambda (c)
-          (pg-exec c
-            (string-append
-              "DELETE FROM pages WHERE slug = "
-              (pg-quote-literal slug))))))
+          (pg-exec c "DELETE FROM pages WHERE slug = $1" slug))))
 
     (define (handle-edit-save req params cfg auth)
       (let* ((slug (params-ref params "slug"))
