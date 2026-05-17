@@ -234,7 +234,8 @@
           (set! clauses
                 (cons (string-append
                         "d.id IN (SELECT done_id FROM tracker_done_topics "
-                        "         WHERE topic_id IN " (add-param! topics) ")")
+                        "         WHERE topic_id IN "
+                        (add-param! (list->vector topics)) ")")
                       clauses)))
         (cond
           ((and from-d (not (string=? from-d "")))

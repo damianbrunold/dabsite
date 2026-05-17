@@ -396,7 +396,7 @@
                        "WHERE title_key <> '' "
                        "AND title_key IN $1 "
                        "AND fetched_at > now() - make_interval(days => $2)")
-                     (list keys dedup-window-days))))
+                     (list (list->vector keys) dedup-window-days))))
            (map (lambda (row) (vector-ref row 0)) rs)))))
 
     (define (member-string? s xs)
