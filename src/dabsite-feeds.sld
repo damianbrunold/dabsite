@@ -8,6 +8,7 @@
           (srfi 13)
           (srfi 18)
           (scm database postgres)
+          (scm net http client)
           (scm net http request)
           (scm net http response)
           (scm net http route)
@@ -92,6 +93,9 @@
       ;; entries read as they triage them, which naturally shrinks the
       ;; page. min_entries on a feed is now effectively a no-op but the
       ;; column is retained for forward compatibility.
+      ;; Manual pins (feed_id NULL) never appear here — this view is the
+      ;; unread/archive triage list for feed-sourced items. Manual pins
+      ;; live in /feeds/pinned. The inner join enforces that.
       (let ((sql (string-append
                    "SELECT fe.id::text AS id, f.label AS label, "
                    "  f.category AS category, fe.title AS title, "
@@ -99,7 +103,8 @@
                    "  substring(fe.summary, 1, "
                    (number->string summary-preview-chars) ") AS summary, "
                    "  to_char(fe.fetched_at, 'YYYY-MM-DD HH24:MI') AS published, "
-                   "  CASE WHEN fe.read_at IS NULL THEN 'no' ELSE 'yes' END AS read "
+                   "  CASE WHEN fe.read_at IS NULL THEN 'no' ELSE 'yes' END AS read, "
+                   "  CASE WHEN fe.pinned_at IS NULL THEN 'no' ELSE 'yes' END AS pinned "
                    "FROM feed_entries fe JOIN feeds f ON f.id = fe.feed_id "
                    "WHERE " (build-filter q category show-all?) " "
                    "ORDER BY fe.fetched_at DESC, fe.id ASC")))
@@ -209,7 +214,9 @@
     ;; Soft-prune: mark read entries beyond the per-label cap as deleted.
     ;; The rows stay in the table so the (feed_id, guid) unique row and
     ;; the title_key recency scan can still suppress re-inserts when the
-    ;; same item shows up in a later refresh.
+    ;; same item shows up in a later refresh. Pinned entries are immune
+    ;; to pruning. Manual pins (feed_id NULL) are filtered out by the
+    ;; inner join too, but the pinned_at guard is the load-bearing one.
     (define (prune-read-entries! cfg)
       (exec cfg
         (string-append
@@ -220,7 +227,8 @@
           "                            'feed#' || f.id::text) "
           "      ORDER BY fe.read_at DESC, fe.id DESC) AS rn "
           "    FROM feed_entries fe JOIN feeds f ON f.id = fe.feed_id "
-          "    WHERE fe.read_at IS NOT NULL AND fe.deleted_at IS NULL"
+          "    WHERE fe.read_at IS NOT NULL AND fe.deleted_at IS NULL "
+          "    AND fe.pinned_at IS NULL"
           "  ) t WHERE rn > " (number->string read-entries-per-label-cap) ")")))
 
     ;; Second-stage: physically remove rows whose deleted_at is past the
@@ -234,8 +242,256 @@
             (string-append
               "DELETE FROM feed_entries "
               "WHERE deleted_at IS NOT NULL "
+              "AND pinned_at IS NULL "
               "AND deleted_at < now() - make_interval(days => $1)")
             (list hard-prune-after-days)))
+
+    ;; --- pinning -------------------------------------------------------
+
+    ;; Pinning also marks the entry read (if not already) so it leaves
+    ;; the unread triage list. Unpinning leaves read_at alone — the
+    ;; entry was already read when pinned.
+    (define (pin-entry! cfg id)
+      (exec cfg
+            (string-append
+              "UPDATE feed_entries "
+              "SET pinned_at = COALESCE(pinned_at, now()), "
+              "    read_at   = COALESCE(read_at, now()), "
+              "    deleted_at = NULL "
+              "WHERE id = $1")
+            (list id)))
+
+    (define (unpin-entry! cfg id)
+      ;; Manual pins (feed_id NULL) have no archive to fall back to and
+      ;; would become unreachable from the UI, so unpinning a manual pin
+      ;; deletes it outright. Feed-sourced pins become regular read
+      ;; entries again; the next prune may soft-delete them.
+      (exec cfg
+            (string-append
+              "DELETE FROM feed_entries "
+              "WHERE id = $1 AND feed_id IS NULL")
+            (list id))
+      (exec cfg
+            (string-append
+              "UPDATE feed_entries SET pinned_at = NULL "
+              "WHERE id = $1 AND feed_id IS NOT NULL")
+            (list id)))
+
+    (define (unpin-by-ids! cfg ids)
+      ;; Bulk unpin a list of ids. Used by "remove all currently
+      ;; displayed" — ids come from re-running the pinned-list query
+      ;; with the active filter.
+      (cond
+        ((null? ids) #t)
+        (else
+         (exec cfg
+               (string-append
+                 "DELETE FROM feed_entries "
+                 "WHERE id IN $1 AND feed_id IS NULL")
+               (list (list->vector ids)))
+         (exec cfg
+               (string-append
+                 "UPDATE feed_entries SET pinned_at = NULL "
+                 "WHERE id IN $1 AND feed_id IS NOT NULL")
+               (list (list->vector ids))))))
+
+    (define (unpin-stale! cfg)
+      (exec cfg
+            (string-append
+              "DELETE FROM feed_entries "
+              "WHERE pinned_at IS NOT NULL "
+              "AND link_status = 'stale' AND feed_id IS NULL"))
+      (exec cfg
+            (string-append
+              "UPDATE feed_entries SET pinned_at = NULL "
+              "WHERE pinned_at IS NOT NULL "
+              "AND link_status = 'stale' AND feed_id IS NOT NULL")))
+
+    ;; --- pinned listing ------------------------------------------------
+
+    (define (build-pinned-filter q category feed-id since until stale-only?)
+      ;; All clauses ANDed together. Empty values are skipped. Feed
+      ;; category/label come from the feeds row when present, otherwise
+      ;; from the manual_* columns on feed_entries.
+      (let ((clauses (list "fe.pinned_at IS NOT NULL")))
+        (when stale-only?
+          (set! clauses (cons "fe.link_status = 'stale'" clauses)))
+        (when (and category (not (string=? category "")))
+          (set! clauses
+                (cons (string-append
+                        "COALESCE(f.category, fe.manual_category, 'misc') = "
+                        (pg-quote-literal category))
+                      clauses)))
+        (when (and feed-id (not (string=? feed-id "")))
+          (set! clauses
+                (cons (string-append
+                        "fe.feed_id = " (pg-quote-literal feed-id) "::bigint")
+                      clauses)))
+        (when (and since (not (string=? since "")))
+          (set! clauses
+                (cons (string-append
+                        "fe.pinned_at >= " (pg-quote-literal since) "::date")
+                      clauses)))
+        (when (and until (not (string=? until "")))
+          (set! clauses
+                (cons (string-append
+                        "fe.pinned_at < (" (pg-quote-literal until)
+                        "::date + INTERVAL '1 day')")
+                      clauses)))
+        (when (and q (> (string-length (string-trim-both q)) 0))
+          (set! clauses
+                (cons (string-append
+                        "to_tsvector('simple', fe.title || ' ' || fe.summary) "
+                        "@@ plainto_tsquery('simple', "
+                        (pg-quote-literal q) ")")
+                      clauses)))
+        (string-join clauses " AND ")))
+
+    (define (list-pinned-entries cfg q category feed-id since until stale-only?)
+      (let ((sql (string-append
+                   "SELECT fe.id::text AS id, "
+                   "  COALESCE(f.label, fe.manual_label, '') AS label, "
+                   "  COALESCE(f.category, fe.manual_category, 'misc') AS category, "
+                   "  fe.title AS title, fe.link AS link, "
+                   "  substring(fe.summary, 1, "
+                   (number->string summary-preview-chars) ") AS summary, "
+                   "  to_char(fe.pinned_at, 'YYYY-MM-DD HH24:MI') AS published, "
+                   "  'yes' AS read, 'yes' AS pinned, "
+                   "  fe.link_status AS link_status, "
+                   "  CASE WHEN fe.feed_id IS NULL THEN 'yes' ELSE 'no' END AS manual "
+                   "FROM feed_entries fe LEFT JOIN feeds f ON f.id = fe.feed_id "
+                   "WHERE "
+                   (build-pinned-filter q category feed-id since until stale-only?)
+                   " ORDER BY fe.pinned_at DESC, fe.id DESC")))
+        (alist-rows cfg sql)))
+
+    (define (list-pinned-ids cfg q category feed-id since until stale-only?)
+      ;; Used by "remove all currently displayed" — returns just the ids
+      ;; that the same filter would render, so the bulk-unpin matches
+      ;; exactly what the user saw.
+      (let* ((sql (string-append
+                    "SELECT fe.id::text AS id "
+                    "FROM feed_entries fe LEFT JOIN feeds f ON f.id = fe.feed_id "
+                    "WHERE "
+                    (build-pinned-filter q category feed-id since until stale-only?)))
+             (rs  (alist-rows cfg sql)))
+        (filter-map (lambda (r) (string->number (cdr (assoc "id" r)))) rs)))
+
+    (define (count-pinned cfg)
+      (let ((rs (rows cfg
+                  (string-append
+                    "SELECT COUNT(*)::text FROM feed_entries "
+                    "WHERE pinned_at IS NOT NULL"))))
+        (cond ((null? rs) 0)
+              (else (or (string->number (vector-ref (car rs) 0)) 0)))))
+
+    (define (count-pinned-stale cfg)
+      (let ((rs (rows cfg
+                  (string-append
+                    "SELECT COUNT(*)::text FROM feed_entries "
+                    "WHERE pinned_at IS NOT NULL AND link_status = 'stale'"))))
+        (cond ((null? rs) 0)
+              (else (or (string->number (vector-ref (car rs) 0)) 0)))))
+
+    (define (list-pinned-categories cfg)
+      (map (lambda (r) (vector-ref r 0))
+           (rows cfg
+             (string-append
+               "SELECT DISTINCT COALESCE(f.category, fe.manual_category, 'misc') "
+               "FROM feed_entries fe LEFT JOIN feeds f ON f.id = fe.feed_id "
+               "WHERE fe.pinned_at IS NOT NULL "
+               "ORDER BY 1"))))
+
+    (define (list-pinned-feeds cfg)
+      ;; (id . title) pairs for the feed filter dropdown. Excludes the
+      ;; synthetic "Manual" bucket — the user picks that via category.
+      (alist-rows cfg
+        (string-append
+          "SELECT DISTINCT f.id::text AS id, f.title AS title "
+          "FROM feed_entries fe JOIN feeds f ON f.id = fe.feed_id "
+          "WHERE fe.pinned_at IS NOT NULL "
+          "ORDER BY f.title")))
+
+    ;; --- manual pin entry ---------------------------------------------
+
+    (define (random-token n)
+      ;; Used to synthesize a guid for manually added pins. n must be a
+      ;; small positive integer; the result is a hex-ish string of
+      ;; length 2n.
+      (let ((out (open-output-string)))
+        (let loop ((i 0))
+          (cond
+            ((= i n) (get-output-string out))
+            (else
+             (let ((b (modulo (* (+ i 1)
+                                 (exact (round (* (current-second) 1000000))))
+                              65536)))
+               (write-string
+                 (string-append
+                   (number->string (quotient b 256) 16)
+                   "-"
+                   (number->string (modulo b 256) 16))
+                 out)
+               (loop (+ i 1))))))))
+
+    (define (add-manual-pin! cfg link title category label summary)
+      ;; Returns #t on success. Stores a manual entry that's already
+      ;; marked read and pinned, with a synthetic guid so the
+      ;; (feed_id, guid) constraint is happy. NB: feed_id is NULL,
+      ;; and Postgres treats NULLs as distinct in unique constraints,
+      ;; so the same URL can be added twice — that's intentional.
+      (exec cfg
+        (string-append
+          "INSERT INTO feed_entries "
+          "(feed_id, guid, title, link, summary, "
+          " manual_category, manual_label, "
+          " read_at, pinned_at) "
+          "VALUES (NULL, $1, $2, $3, $4, $5, $6, now(), now())")
+        (list (string-append "manual:" (random-token 8))
+              title link summary category label)))
+
+    ;; --- link health ---------------------------------------------------
+
+    (define link-check-batch 20)
+    (define link-check-interval-seconds 600)
+    (define link-check-stale-threshold 2)
+    (define link-check-recheck-after-hours 6)
+
+    (define (due-link-checks cfg)
+      ;; Pick pinned entries with a non-empty link whose last check is
+      ;; older than the recheck window (or never checked). NULLs first
+      ;; ensures fresh pins get checked promptly.
+      (alist-rows cfg
+        (string-append
+          "SELECT id::text AS id, link AS link, "
+          "       link_failure_count::text AS failures "
+          "FROM feed_entries "
+          "WHERE pinned_at IS NOT NULL AND link <> '' "
+          "AND (link_checked_at IS NULL "
+          "  OR link_checked_at < now() - make_interval(hours => $1)) "
+          "ORDER BY link_checked_at NULLS FIRST "
+          "LIMIT $2")
+        (list link-check-recheck-after-hours link-check-batch)))
+
+    (define (record-link-check! cfg id ok?)
+      (cond
+        (ok?
+         (exec cfg
+               (string-append
+                 "UPDATE feed_entries SET link_checked_at = now(), "
+                 "  link_status = 'ok', link_failure_count = 0 "
+                 "WHERE id = $1")
+               (list id)))
+        (else
+         (exec cfg
+               (string-append
+                 "UPDATE feed_entries SET link_checked_at = now(), "
+                 "  link_failure_count = link_failure_count + 1, "
+                 "  link_status = CASE "
+                 "    WHEN link_failure_count + 1 >= $2 THEN 'stale' "
+                 "    ELSE link_status END "
+                 "WHERE id = $1")
+               (list id link-check-stale-threshold)))))
 
     (define (update-category-order! cfg name sort-order)
       ;; Upserts a category row. Used by the admin UI to reorder.
@@ -493,6 +749,56 @@
                  (string-join rows-sql ", ")
                  " ON CONFLICT (feed_id, guid) DO NOTHING")))))))
 
+    ;; --- link health probe (called from the scheduler) ---------------
+
+    (define link-probe-ua
+      '(("User-Agent" . "dabsite/1.0 (+https://www.damianbrunold.ch)")
+        ("Accept"     . "*/*")))
+
+    (define (probe-link-ok? url)
+      ;; Returns #t if the URL responds with a non-error status. Tries
+      ;; HEAD first (cheap); if that yields anything other than 2xx/3xx
+      ;; we fall back to GET, because plenty of sites mis-handle HEAD
+      ;; (return 405, 403, or just hang up) while a GET works fine.
+      (define (ok-status? s) (and s (>= s 200) (< s 400)))
+      (define (try method)
+        (guard (exn (#t #f))
+          (let* ((req (make-http-request method url link-probe-ua #f))
+                 (resp (http-send req)))
+            (http-response-status resp))))
+      (let ((head-status (try "HEAD")))
+        (cond
+          ((ok-status? head-status) #t)
+          (else
+           (let ((get-status (try "GET")))
+             (ok-status? get-status))))))
+
+    (define (check-pinned-links! cfg)
+      (let ((batch (due-link-checks cfg)))
+        (for-each
+          (lambda (row)
+            (let* ((id     (string->number (cdr (assoc "id" row))))
+                   (link   (cdr (assoc "link" row)))
+                   (ok?    (probe-link-ok? link)))
+              (guard (exn (#t (log-error "feeds"
+                                "record-link-check! failed; continuing")))
+                (record-link-check! cfg id ok?))))
+          batch)))
+
+    (define last-link-check-time #f)
+
+    (define (maybe-check-pinned-links! cfg)
+      (let ((now-s (exact (round (current-second)))))
+        (cond
+          ((or (not last-link-check-time)
+               (>= (- now-s last-link-check-time)
+                   link-check-interval-seconds))
+           (set! last-link-check-time now-s)
+           (guard (exn (#t (log-error "feeds"
+                             "check-pinned-links! raised; continuing")))
+             (check-pinned-links! cfg)))
+          (else #t))))
+
     ;; Unix-seconds timestamp of the last hard-prune run, or #f if not
     ;; yet run this process. Read and written only from the scheduler
     ;; thread, so set! is safe here.
@@ -544,7 +850,8 @@
         (guard (exn (#t (log-error "feeds"
                           "prune-read-entries! failed; continuing")))
           (prune-read-entries! cfg))
-        (maybe-hard-prune! cfg)))
+        (maybe-hard-prune! cfg)
+        (maybe-check-pinned-links! cfg)))
 
     (define scheduler-tick-seconds 30)
 
@@ -573,15 +880,27 @@
       ;; Returns the SXML for one feed entry. The tooltip combines the
       ;; publication date and the (truncated, plain-text) summary so
       ;; hovering surfaces both without consuming column width.
-      (let* ((id    (row-field row "id"))
-             (label (row-field row "label"))
-             (cat   (row-field row "category"))
-             (title (row-field row "title"))
-             (link  (row-field row "link"))
-             (sumr  (strip-html-tags (row-field row "summary")))
-             (pub   (row-field row "published"))
-             (read  (row-field row "read"))
-             (read? (string=? read "yes"))
+      ;;
+      ;; The row may include "pinned" ('yes'|'no'), "link_status"
+      ;; ('ok'|'stale'), and "manual" ('yes'|'no'). Pinned entries show
+      ;; an active pin button that unpins on click; unpinned entries
+      ;; show a hollow pin that pins. Manual pins skip the read toggle
+      ;; entirely (they're always read; unpin = delete).
+      (let* ((id     (row-field row "id"))
+             (label  (row-field row "label"))
+             (cat    (row-field row "category"))
+             (title  (row-field row "title"))
+             (link   (row-field row "link"))
+             (sumr   (strip-html-tags (row-field row "summary")))
+             (pub    (row-field row "published"))
+             (read   (row-field row "read"))
+             (read?  (string=? read "yes"))
+             (pinned (row-field row "pinned"))
+             (pinned? (string=? pinned "yes"))
+             (lstat  (row-field row "link_status"))
+             (stale? (string=? lstat "stale"))
+             (manual (row-field row "manual"))
+             (manual? (string=? manual "yes"))
              (tip   (cond
                       ((and (not (string=? pub  ""))
                             (not (string=? sumr "")))
@@ -589,16 +908,31 @@
                       ((not (string=? pub  "")) pub)
                       (else sumr))))
         `(li (@ (class ,(string-append "feed-entry"
-                                       (if read? " is-read" "")))
+                                       (if read?   " is-read"   "")
+                                       (if pinned? " is-pinned" "")
+                                       (if stale?  " is-stale"  "")))
                 (data-id ,id)
                 (data-cat ,cat))
+             ,(cond
+                (manual? `(span (@ (class "mark-spacer"))))
+                (else
+                 `(form (@ (method "post")
+                           (action ,(string-append "/feeds/entry/" id "/"
+                                                   (if read? "unread" "read")))
+                           (class "mark"))
+                    (button (@ (type "submit")
+                               (title ,(if read? "mark unread" "mark read")))
+                      ,(if read? "↩" "✓")))))
              (form (@ (method "post")
                       (action ,(string-append "/feeds/entry/" id "/"
-                                              (if read? "unread" "read")))
-                      (class "mark"))
+                                              (if pinned? "unpin" "pin")))
+                      (class "pin"))
                 (button (@ (type "submit")
-                           (title ,(if read? "mark unread" "mark read")))
-                  ,(if read? "↩" "✓")))
+                           (title ,(cond
+                                     (manual? "remove pin")
+                                     (pinned? "unpin")
+                                     (else    "pin"))))
+                  ,(if pinned? "📌" "📍")))
              (a (@ (class "entry-link")
                    (href ,link)
                    (target "_blank")
@@ -608,7 +942,11 @@
                      ""
                      `(span (@ (class "label")) ,label))
                 ,(if (string=? label "") "" " ")
-                ,title))))
+                ,title
+                ,(if stale? `(span (@ (class "stale-badge")
+                                      (title "link last check failed"))
+                                   " · stale")
+                            "")))))
 
     (define (entries-by-category entries)
       ;; Returns alist (category . entries-in-order).
@@ -739,6 +1077,8 @@
                                  (checked ,(if show-all? #t #f))))
                        "show archive")
                      (button (@ (type "submit")) "Apply")
+                     (a (@ (class "admin-link") (href "/feeds/pinned"))
+                        "pinned")
                      (a (@ (class "admin-link") (href "/feeds/admin"))
                         "admin"))
                    ;; Mark older-than form. Carries the active category
@@ -777,6 +1117,139 @@
                                    (cond
                                      (category "feeds-page feeds-page-single")
                                      (else     "feeds-page"))))
+                       (html->string body)))))
+
+    ;; --- pinned view ---------------------------------------------------
+
+    (define (pinned-cat-option-sxml current c)
+      `(option (@ (value ,c)
+                  (selected ,(and current (string=? current c) #t))) ,c))
+
+    (define (pinned-feed-option-sxml current f)
+      (let ((id    (cdr (assoc "id" f)))
+            (title (cdr (assoc "title" f))))
+        `(option (@ (value ,id)
+                    (selected ,(and current (string=? current id) #t)))
+                 ,title)))
+
+    (define (render-pinned-page req auth cfg q category feed-id since until
+                                 stale-only? msg)
+      (let* ((entries (list-pinned-entries cfg q category feed-id
+                                            since until stale-only?))
+             (cats    (list-pinned-categories cfg))
+             (feeds   (list-pinned-feeds cfg))
+             (total   (count-pinned cfg))
+             (stale-n (count-pinned-stale cfg))
+             ;; The "remove all currently displayed" form has to carry
+             ;; every filter value so the server-side bulk action matches
+             ;; what the user actually sees.
+             (hidden-filters
+               `(,@(if (and q (not (string=? q "")))
+                       `((input (@ (type "hidden") (name "q") (value ,q))))
+                       '())
+                 ,@(if (and category (not (string=? category "")))
+                       `((input (@ (type "hidden") (name "cat") (value ,category))))
+                       '())
+                 ,@(if (and feed-id (not (string=? feed-id "")))
+                       `((input (@ (type "hidden") (name "feed") (value ,feed-id))))
+                       '())
+                 ,@(if (and since (not (string=? since "")))
+                       `((input (@ (type "hidden") (name "since") (value ,since))))
+                       '())
+                 ,@(if (and until (not (string=? until "")))
+                       `((input (@ (type "hidden") (name "until") (value ,until))))
+                       '())
+                 ,@(if stale-only?
+                       `((input (@ (type "hidden") (name "stale") (value "1"))))
+                       '())))
+             (body
+               `((header (@ (class "feeds-head"))
+                   (h1 "Pinned "
+                       (span (@ (class "qual"))
+                             ,(string-append
+                                (number->string (length entries)) " / "
+                                (number->string total)
+                                (if (> stale-n 0)
+                                    (string-append "  ·  " (number->string stale-n)
+                                                   " stale")
+                                    ""))))
+                   (a (@ (class "admin-link") (href "/feeds")) "← feeds")
+                   ,(cond
+                      ((and msg (not (string=? msg "")))
+                       `(p (@ (class "flash")) ,msg))
+                      (else ""))
+                   (form (@ (method "get") (action "/feeds/pinned")
+                            (class "feed-filters pinned-filters"))
+                     (input (@ (type "search") (name "q")
+                               (placeholder "search pinned")
+                               (value ,(or q ""))))
+                     (select (@ (name "cat"))
+                       (option (@ (value "")) "all categories")
+                       ,@(map (lambda (c) (pinned-cat-option-sxml category c))
+                              cats))
+                     (select (@ (name "feed"))
+                       (option (@ (value "")) "all feeds")
+                       ,@(map (lambda (f) (pinned-feed-option-sxml feed-id f))
+                              feeds))
+                     (label "from "
+                       (input (@ (type "date") (name "since")
+                                 (value ,(or since "")))))
+                     (label "to "
+                       (input (@ (type "date") (name "until")
+                                 (value ,(or until "")))))
+                     (label (@ (class "checkbox"))
+                       (input (@ (type "checkbox") (name "stale") (value "1")
+                                 (checked ,(if stale-only? #t #f))))
+                       "stale only")
+                     (button (@ (type "submit")) "Apply")))
+                 ;; Manual add form.
+                 (form (@ (method "post") (action "/feeds/pinned/add")
+                          (class "pinned-add"))
+                   (h2 "Add URL")
+                   (label "URL "
+                     (input (@ (type "url") (name "link") (required #t))))
+                   (label "Title "
+                     (input (@ (type "text") (name "title") (required #t))))
+                   (label "Category "
+                     (input (@ (type "text") (name "category") (value "misc"))))
+                   (label "Label "
+                     (input (@ (type "text") (name "label") (maxlength "8"))))
+                   (label "Note "
+                     (input (@ (type "text") (name "summary"))))
+                   (button (@ (type "submit")) "Add pin"))
+                 ;; Bulk-action bar.
+                 (div (@ (class "pinned-bulk"))
+                   (form (@ (method "post")
+                            (action "/feeds/pinned/remove-stale")
+                            (class "inline")
+                            (data-confirm
+                              "Unpin all stale entries?"))
+                     (button (@ (type "submit") (class "linkish danger")
+                                (disabled ,(if (= stale-n 0) #t #f)))
+                       ,(string-append "remove all stale ("
+                                       (number->string stale-n) ")")))
+                   " "
+                   (form (@ (method "post")
+                            (action "/feeds/pinned/remove-current")
+                            (class "inline")
+                            (data-confirm
+                              "Unpin all currently displayed entries?"))
+                     ,@hidden-filters
+                     (button (@ (type "submit") (class "linkish danger")
+                                (disabled ,(if (null? entries) #t #f)))
+                       ,(string-append "remove currently displayed ("
+                                       (number->string (length entries)) ")"))))
+                 ,(cond
+                    ((null? entries)
+                     `(p (@ (class "empty")) "No pinned entries match."))
+                    (else
+                     `(ul (@ (class "feed-entries pinned-entries"))
+                       ,@(map feed-entry-sxml entries)))))))
+        (html-response
+          (render-page req auth
+                       '((title  . "Pinned")
+                         (active . feeds)
+                         (body-class . "feeds-page pinned-page"))
                        (html->string body)))))
 
     (define (cat-order-row-sxml c)
@@ -918,6 +1391,28 @@
           (else default))))
 
     (define (install-feed-routes! router cfg auth)
+      ;; Reconstructs a /feeds/pinned URL carrying the filter values
+      ;; posted in `form`. Used after bulk pinned actions so the user
+      ;; lands on the same view they came from. Defined up front because
+      ;; internal definitions must precede all expressions in a body.
+      (define (pinned-redirect form)
+        (let* ((parts '())
+               (add!  (lambda (k v)
+                        (when (and v (not (string=? v "")))
+                          (set! parts
+                                (cons (string-append (percent-encode k) "="
+                                                     (percent-encode v))
+                                      parts))))))
+          (add! "q"     (form-ref form "q"     ""))
+          (add! "cat"   (form-ref form "cat"   ""))
+          (add! "feed"  (form-ref form "feed"  ""))
+          (add! "since" (form-ref form "since" ""))
+          (add! "until" (form-ref form "until" ""))
+          (add! "stale" (form-ref form "stale" ""))
+          (let ((qs (string-join (reverse parts) "&")))
+            (cond ((string=? qs "") "/feeds/pinned")
+                  (else (string-append "/feeds/pinned?" qs))))))
+
       (router-add! router "GET" "/feeds"
         (require-auth auth
           (lambda (req params)
@@ -973,6 +1468,96 @@
                                   (else (string-append "/feeds?cat="
                                                        (percent-encode cat))))))
                 "")))))
+
+      ;; --- pinned routes ---------------------------------------------
+
+      (router-add! router "GET" "/feeds/pinned"
+        (require-auth auth
+          (lambda (req params)
+            (let* ((q      (param-or req params "q"     ""))
+                   (cat    (param-or req params "cat"   ""))
+                   (feed   (param-or req params "feed"  ""))
+                   (since  (param-or req params "since" ""))
+                   (until  (param-or req params "until" ""))
+                   (stale  (param-or req params "stale" ""))
+                   (msg    (param-or req params "msg"   "")))
+              (render-pinned-page req auth cfg
+                                  (cond ((string=? q "")     #f) (else q))
+                                  (cond ((string=? cat "")   #f) (else cat))
+                                  (cond ((string=? feed "")  #f) (else feed))
+                                  (cond ((string=? since "") #f) (else since))
+                                  (cond ((string=? until "") #f) (else until))
+                                  (string=? stale "1")
+                                  msg)))))
+
+      (router-add! router "POST" "/feeds/entry/:id/pin"
+        (require-auth auth
+          (lambda (req params)
+            (let ((id (string->number (params-ref params "id"))))
+              (when id (pin-entry! cfg id))
+              (make-http-response 302
+                (list (cons "Location"
+                            ;; Pin from the feeds list → stay on feeds;
+                            ;; pin from pinned (rare; e.g. re-pin) →
+                            ;; stay on pinned. We don't have referer
+                            ;; handling, so default to /feeds.
+                            "/feeds"))
+                "")))))
+
+      (router-add! router "POST" "/feeds/entry/:id/unpin"
+        (require-auth auth
+          (lambda (req params)
+            (let ((id (string->number (params-ref params "id"))))
+              (when id (unpin-entry! cfg id))
+              (make-http-response 302
+                (list (cons "Location" "/feeds/pinned")) "")))))
+
+      (router-add! router "POST" "/feeds/pinned/add"
+        (require-auth auth
+          (lambda (req params)
+            (let* ((form    (parse-www-form (or (http-request-body req) "")))
+                   (link    (string-trim-both (form-ref form "link" "")))
+                   (title   (string-trim-both (form-ref form "title" "")))
+                   (cat     (string-trim-both (form-ref form "category" "misc")))
+                   (lbl     (string-trim-both (form-ref form "label" "")))
+                   (summary (form-ref form "summary" "")))
+              (cond
+                ((or (string=? link "") (string=? title ""))
+                 (render-error 400 "URL and title are required."))
+                (else
+                 (add-manual-pin! cfg link title
+                                  (cond ((string=? cat "") "misc") (else cat))
+                                  lbl summary)
+                 (make-http-response 302
+                   (list (cons "Location" "/feeds/pinned")) "")))))))
+
+      (router-add! router "POST" "/feeds/pinned/remove-stale"
+        (require-auth auth
+          (lambda (req params)
+            (unpin-stale! cfg)
+            (make-http-response 302
+              (list (cons "Location" "/feeds/pinned")) ""))))
+
+      (router-add! router "POST" "/feeds/pinned/remove-current"
+        (require-auth auth
+          (lambda (req params)
+            (let* ((form  (parse-www-form (or (http-request-body req) "")))
+                   (q     (form-ref form "q"     ""))
+                   (cat   (form-ref form "cat"   ""))
+                   (feed  (form-ref form "feed"  ""))
+                   (since (form-ref form "since" ""))
+                   (until (form-ref form "until" ""))
+                   (stale (form-ref form "stale" ""))
+                   (ids   (list-pinned-ids cfg
+                            (cond ((string=? q "")     #f) (else q))
+                            (cond ((string=? cat "")   #f) (else cat))
+                            (cond ((string=? feed "")  #f) (else feed))
+                            (cond ((string=? since "") #f) (else since))
+                            (cond ((string=? until "") #f) (else until))
+                            (string=? stale "1"))))
+              (unpin-by-ids! cfg ids)
+              (make-http-response 302
+                (list (cons "Location" (pinned-redirect form))) "")))))
 
       (router-add! router "GET" "/feeds/admin"
         (require-auth auth
