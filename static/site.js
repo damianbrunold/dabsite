@@ -64,9 +64,80 @@
     // having read it. Mark the entry read and remove it in place, same as
     // clicking the ✓ button. Without JS the link still works (the entry
     // simply stays unread until marked explicitly).
+    // Long-press on touch devices opens a small sheet showing the
+    // entry's date + summary (the same content as the desktop title
+    // tooltip). A successful long-press suppresses the click so the
+    // link doesn't navigate and the entry isn't marked read.
+    var LONG_PRESS_MS = 500;
+    var MOVE_TOLERANCE_PX = 10;
+
+    function closeTipSheet() {
+        var b = document.querySelector('.tip-sheet-backdrop');
+        var s = document.querySelector('.tip-sheet');
+        if (b) b.remove();
+        if (s) s.remove();
+    }
+    function showTipSheet(text) {
+        closeTipSheet();
+        if (!text) return;
+        var backdrop = document.createElement('div');
+        backdrop.className = 'tip-sheet-backdrop';
+        var sheet = document.createElement('div');
+        sheet.className = 'tip-sheet';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'tip-close';
+        close.textContent = 'close';
+        var body = document.createElement('div');
+        body.textContent = text;
+        sheet.appendChild(close);
+        sheet.appendChild(body);
+        document.body.appendChild(backdrop);
+        document.body.appendChild(sheet);
+        backdrop.addEventListener('click', closeTipSheet);
+        close.addEventListener('click', closeTipSheet);
+    }
+
     document.querySelectorAll('li.feed-entry a.entry-link').forEach(
         function (a) {
-            a.addEventListener('click', function () {
+            var timer = null;
+            var longPressed = false;
+            var startX = 0, startY = 0;
+
+            function cancel() {
+                if (timer !== null) { clearTimeout(timer); timer = null; }
+            }
+            a.addEventListener('touchstart', function (ev) {
+                longPressed = false;
+                var t = ev.touches[0];
+                startX = t.clientX; startY = t.clientY;
+                cancel();
+                timer = setTimeout(function () {
+                    longPressed = true;
+                    timer = null;
+                    showTipSheet(a.getAttribute('title') || '');
+                }, LONG_PRESS_MS);
+            }, { passive: true });
+            a.addEventListener('touchmove', function (ev) {
+                var t = ev.touches[0];
+                if (Math.abs(t.clientX - startX) > MOVE_TOLERANCE_PX ||
+                    Math.abs(t.clientY - startY) > MOVE_TOLERANCE_PX) {
+                    cancel();
+                }
+            }, { passive: true });
+            a.addEventListener('touchend', cancel, { passive: true });
+            a.addEventListener('touchcancel', cancel, { passive: true });
+
+            a.addEventListener('click', function (ev) {
+                if (longPressed) {
+                    // Long-press fired: swallow the synthetic click so the
+                    // link doesn't navigate and the mark-read below is
+                    // skipped. Reset for the next interaction.
+                    ev.preventDefault();
+                    ev.stopImmediatePropagation();
+                    longPressed = false;
+                    return;
+                }
                 var li = a.closest('li.feed-entry');
                 if (!li || li.classList.contains('is-read')) return;
                 var id = li.getAttribute('data-id');
