@@ -213,31 +213,34 @@
     (define default-list-window-days 30)
 
     (define (build-where q topics from-d to-d apply-default-window?)
-      ;; Returns the WHERE expression (without leading WHERE). When
-      ;; apply-default-window? is true AND no explicit from-d is set,
+      ;; Returns (sql . params): WHERE expression text (without leading
+      ;; WHERE) and the list of values referenced by its $N placeholders.
+      ;; When apply-default-window? is true AND no explicit from-d is set,
       ;; the result is clamped to the last `default-list-window-days`.
-      (let ((clauses (list "1=1")))
+      (let ((clauses (list "1=1"))
+            (params  '())
+            (n 0))
+        (define (add-param! v)
+          (set! n (+ n 1))
+          (set! params (append params (list v)))
+          (string-append "$" (number->string n)))
         (when (and q (> (string-length (string-trim-both q)) 0))
           (set! clauses
                 (cons (string-append
                         "to_tsvector('simple', d.text) "
-                        "@@ plainto_tsquery('simple', "
-                        (pg-quote-literal q) ")")
+                        "@@ plainto_tsquery('simple', " (add-param! q) ")")
                       clauses)))
         (when (pair? topics)
           (set! clauses
                 (cons (string-append
                         "d.id IN (SELECT done_id FROM tracker_done_topics "
-                        "         WHERE topic_id IN ("
-                        (string-join (map pg-quote-int topics) ", ")
-                        "))")
+                        "         WHERE topic_id IN " (add-param! topics) ")")
                       clauses)))
         (cond
           ((and from-d (not (string=? from-d "")))
            (set! clauses
                  (cons (string-append
-                         "d.completed >= " (pg-quote-literal from-d)
-                         "::timestamptz")
+                         "d.completed >= " (add-param! from-d) "::timestamptz")
                        clauses)))
           (apply-default-window?
            (set! clauses
@@ -249,25 +252,27 @@
         (when (and to-d (not (string=? to-d "")))
           (set! clauses
                 (cons (string-append
-                        "d.completed < (" (pg-quote-literal to-d)
+                        "d.completed < (" (add-param! to-d)
                         "::date + 1)::timestamptz")
                       clauses)))
-        (string-join clauses " AND ")))
+        (cons (string-join clauses " AND ") params)))
 
     (define (list-entries cfg q topics from-d to-d apply-default-window? limit)
-      (alist-rows cfg
-        (string-append
-          "SELECT d.id::text AS id, d.text AS text, "
-          "       d.minutes::text AS minutes, "
-          "       to_char(d.completed, 'YYYY-MM-DD HH24:MI') AS completed, "
-          "       COALESCE(string_agg(t.name, ', ' ORDER BY t.name), '') AS topics "
-          "FROM tracker_done d "
-          "LEFT JOIN tracker_done_topics dt ON dt.done_id = d.id "
-          "LEFT JOIN tracker_topics t ON t.id = dt.topic_id "
-          "WHERE " (build-where q topics from-d to-d apply-default-window?) " "
-          "GROUP BY d.id "
-          "ORDER BY d.completed DESC, d.id DESC "
-          "LIMIT " (number->string limit))))
+      (let ((where (build-where q topics from-d to-d apply-default-window?)))
+        (alist-rows cfg
+          (string-append
+            "SELECT d.id::text AS id, d.text AS text, "
+            "       d.minutes::text AS minutes, "
+            "       to_char(d.completed, 'YYYY-MM-DD HH24:MI') AS completed, "
+            "       COALESCE(string_agg(t.name, ', ' ORDER BY t.name), '') AS topics "
+            "FROM tracker_done d "
+            "LEFT JOIN tracker_done_topics dt ON dt.done_id = d.id "
+            "LEFT JOIN tracker_topics t ON t.id = dt.topic_id "
+            "WHERE " (car where) " "
+            "GROUP BY d.id "
+            "ORDER BY d.completed DESC, d.id DESC "
+            "LIMIT " (number->string limit))
+          (cdr where))))
 
     ;; The summary is always scoped to TODAY regardless of list filters.
     ;; Day boundary is taken at the postgres server's timezone.

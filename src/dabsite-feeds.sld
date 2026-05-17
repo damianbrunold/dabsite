@@ -390,22 +390,14 @@
       (cond
         ((null? keys) '())
         (else
-         (let ((in-list (open-output-string)))
-           (let loop ((ks keys) (first? #t))
-             (cond
-               ((null? ks) #t)
-               (else
-                (when (not first?) (write-string ", " in-list))
-                (write-string (pg-quote-literal (car ks)) in-list)
-                (loop (cdr ks) #f))))
-           (let* ((sql (string-append
-                         "SELECT DISTINCT title_key FROM feed_entries "
-                         "WHERE title_key <> '' "
-                         "AND title_key IN (" (get-output-string in-list) ") "
-                         "AND fetched_at > now() - interval '"
-                         (number->string dedup-window-days) " days'"))
-                  (rs (rows cfg sql)))
-             (map (lambda (row) (vector-ref row 0)) rs))))))
+         (let ((rs (rows cfg
+                     (string-append
+                       "SELECT DISTINCT title_key FROM feed_entries "
+                       "WHERE title_key <> '' "
+                       "AND title_key IN $1 "
+                       "AND fetched_at > now() - make_interval(days => $2)")
+                     (list keys dedup-window-days))))
+           (map (lambda (row) (vector-ref row 0)) rs)))))
 
     (define (member-string? s xs)
       (cond ((null? xs) #f)
