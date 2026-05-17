@@ -248,15 +248,14 @@
 
     ;; --- pinning -------------------------------------------------------
 
-    ;; Pinning also marks the entry read (if not already) so it leaves
-    ;; the unread triage list. Unpinning leaves read_at alone — the
-    ;; entry was already read when pinned.
+    ;; Pinning is orthogonal to read state: it just protects the row
+    ;; from prune and surfaces it in the pinned view. The user toggles
+    ;; read/unread separately if they want.
     (define (pin-entry! cfg id)
       (exec cfg
             (string-append
               "UPDATE feed_entries "
               "SET pinned_at = COALESCE(pinned_at, now()), "
-              "    read_at   = COALESCE(read_at, now()), "
               "    deleted_at = NULL "
               "WHERE id = $1")
             (list id)))
@@ -876,7 +875,7 @@
 
     (define (row-field r k) (let ((p (assoc k r))) (if p (cdr p) "")))
 
-    (define (feed-entry-sxml row)
+    (define (feed-entry-sxml row . maybe-return-to)
       ;; Returns the SXML for one feed entry. The tooltip combines the
       ;; publication date and the (truncated, plain-text) summary so
       ;; hovering surfaces both without consuming column width.
@@ -927,12 +926,18 @@
                       (action ,(string-append "/feeds/entry/" id "/"
                                               (if pinned? "unpin" "pin")))
                       (class "pin"))
+                ,(let ((rt (cond ((null? maybe-return-to) "")
+                                 (else (or (car maybe-return-to) "")))))
+                   (if (string=? rt "")
+                       ""
+                       `(input (@ (type "hidden") (name "return")
+                                  (value ,rt)))))
                 (button (@ (type "submit")
                            (title ,(cond
                                      (manual? "remove pin")
                                      (pinned? "unpin")
                                      (else    "pin"))))
-                  ,(if pinned? "📌" "📍")))
+                  ,(if pinned? "📌" "☆")))
              (a (@ (class "entry-link")
                    (href ,link)
                    (target "_blank")
@@ -1060,6 +1065,20 @@
                    (h1 "Feeds "
                        (span (@ (class "qual"))
                              ,(if show-all? "archive" "unread")))
+                   ;; Cog: on narrow viewports it toggles the
+                   ;; filters-wrap visibility via a pure-CSS pattern.
+                   ;; The actual checkbox sits next to filters-wrap as
+                   ;; its sibling (label `for=` reaches it regardless
+                   ;; of position). On desktop the wrap is always shown
+                   ;; and the cog hidden.
+                   (label (@ (for "feed-filters-toggle")
+                             (class "filters-cog")
+                             (aria-label "toggle filters")
+                             (title "filters"))
+                      "⚙"))
+                 (input (@ (type "checkbox") (id "feed-filters-toggle")
+                           (class "filters-toggle")))
+                 (div (@ (class "filters-wrap"))
                    ;; Filter form: search + category select +
                    ;; show-archive + admin link.
                    (form (@ (method "get") (action "/feeds")
@@ -1132,6 +1151,26 @@
                     (selected ,(and current (string=? current id) #t)))
                  ,title)))
 
+    (define (pinned-page-url q category feed-id since until stale-only?)
+      ;; Mirrors pinned-redirect (which works from a parsed form). Used
+      ;; when rendering, where we have the parsed values directly.
+      (let* ((parts '())
+             (add!  (lambda (k v)
+                      (when (and v (not (string=? v "")))
+                        (set! parts
+                              (cons (string-append (percent-encode k) "="
+                                                   (percent-encode v))
+                                    parts))))))
+        (add! "q"     (or q ""))
+        (add! "cat"   (or category ""))
+        (add! "feed"  (or feed-id ""))
+        (add! "since" (or since ""))
+        (add! "until" (or until ""))
+        (when stale-only? (add! "stale" "1"))
+        (let ((qs (string-join (reverse parts) "&")))
+          (cond ((string=? qs "") "/feeds/pinned")
+                (else (string-append "/feeds/pinned?" qs))))))
+
     (define (render-pinned-page req auth cfg q category feed-id since until
                                  stale-only? msg)
       (let* ((entries (list-pinned-entries cfg q category feed-id
@@ -1140,6 +1179,8 @@
              (feeds   (list-pinned-feeds cfg))
              (total   (count-pinned cfg))
              (stale-n (count-pinned-stale cfg))
+             (return-to (pinned-page-url q category feed-id since until
+                                          stale-only?))
              ;; The "remove all currently displayed" form has to carry
              ;; every filter value so the server-side bulk action matches
              ;; what the user actually sees.
@@ -1174,10 +1215,29 @@
                                                    " stale")
                                     ""))))
                    (a (@ (class "admin-link") (href "/feeds")) "← feeds")
-                   ,(cond
-                      ((and msg (not (string=? msg "")))
-                       `(p (@ (class "flash")) ,msg))
-                      (else ""))
+                   ;; Two cog labels: ⚙ toggles the filter+bulk panel,
+                   ;; ＋ toggles the manual-add panel. The actual
+                   ;; checkboxes sit as siblings of their wraps below
+                   ;; (outside the header) so the pure-CSS sibling
+                   ;; selector can show/hide them on mobile. Labels
+                   ;; reach the checkboxes via `for=` regardless of
+                   ;; sibling position.
+                   (label (@ (for "pinned-filters-toggle")
+                             (class "filters-cog")
+                             (aria-label "toggle filters") (title "filters"))
+                      "⚙")
+                   (label (@ (for "pinned-add-toggle")
+                             (class "add-cog")
+                             (aria-label "toggle add URL form")
+                             (title "add URL"))
+                      "＋"))
+                 ,(cond
+                    ((and msg (not (string=? msg "")))
+                     `(p (@ (class "flash")) ,msg))
+                    (else ""))
+                 (input (@ (type "checkbox") (id "pinned-filters-toggle")
+                           (class "filters-toggle")))
+                 (div (@ (class "filters-wrap"))
                    (form (@ (method "get") (action "/feeds/pinned")
                             (class "feed-filters pinned-filters"))
                      (input (@ (type "search") (name "q")
@@ -1201,29 +1261,15 @@
                        (input (@ (type "checkbox") (name "stale") (value "1")
                                  (checked ,(if stale-only? #t #f))))
                        "stale only")
-                     (button (@ (type "submit")) "Apply")))
-                 ;; Manual add form.
-                 (form (@ (method "post") (action "/feeds/pinned/add")
-                          (class "pinned-add"))
-                   (h2 "Add URL")
-                   (label "URL "
-                     (input (@ (type "url") (name "link") (required #t))))
-                   (label "Title "
-                     (input (@ (type "text") (name "title") (required #t))))
-                   (label "Category "
-                     (input (@ (type "text") (name "category") (value "misc"))))
-                   (label "Label "
-                     (input (@ (type "text") (name "label") (maxlength "8"))))
-                   (label "Note "
-                     (input (@ (type "text") (name "summary"))))
-                   (button (@ (type "submit")) "Add pin"))
-                 ;; Bulk-action bar.
-                 (div (@ (class "pinned-bulk"))
+                     (button (@ (type "submit")) "Apply"))
+                  ;; Bulk-action bar lives inside filters-wrap too, so
+                  ;; both filters and the bulk buttons collapse together
+                  ;; on mobile.
+                  (div (@ (class "pinned-bulk"))
                    (form (@ (method "post")
                             (action "/feeds/pinned/remove-stale")
                             (class "inline")
-                            (data-confirm
-                              "Unpin all stale entries?"))
+                            (data-confirm "Unpin all stale entries?"))
                      (button (@ (type "submit") (class "linkish danger")
                                 (disabled ,(if (= stale-n 0) #t #f)))
                        ,(string-append "remove all stale ("
@@ -1238,13 +1284,32 @@
                      (button (@ (type "submit") (class "linkish danger")
                                 (disabled ,(if (null? entries) #t #f)))
                        ,(string-append "remove currently displayed ("
-                                       (number->string (length entries)) ")"))))
+                                       (number->string (length entries)) ")")))))
+                 (input (@ (type "checkbox") (id "pinned-add-toggle")
+                           (class "add-toggle")))
+                 (div (@ (class "add-wrap"))
+                 ;; Manual add form.
+                 (form (@ (method "post") (action "/feeds/pinned/add")
+                          (class "pinned-add"))
+                   (h2 "Add URL")
+                   (label "URL "
+                     (input (@ (type "url") (name "link") (required #t))))
+                   (label "Title "
+                     (input (@ (type "text") (name "title") (required #t))))
+                   (label "Category "
+                     (input (@ (type "text") (name "category") (value "misc"))))
+                   (label "Label "
+                     (input (@ (type "text") (name "label") (maxlength "8"))))
+                   (label "Note "
+                     (input (@ (type "text") (name "summary"))))
+                   (button (@ (type "submit")) "Add pin")))
                  ,(cond
                     ((null? entries)
                      `(p (@ (class "empty")) "No pinned entries match."))
                     (else
                      `(ul (@ (class "feed-entries pinned-entries"))
-                       ,@(map feed-entry-sxml entries)))))))
+                       ,@(map (lambda (e) (feed-entry-sxml e return-to))
+                              entries)))))))
         (html-response
           (render-page req auth
                        '((title  . "Pinned")
@@ -1391,6 +1456,19 @@
           (else default))))
 
     (define (install-feed-routes! router cfg auth)
+      ;; Pin/unpin forms on the pinned view include a "return" hidden
+      ;; field with the current /feeds/pinned URL (including filters)
+      ;; so the user lands back on the same filtered view. We only
+      ;; trust values starting with "/feeds" to avoid open-redirect.
+      (define (safe-return form default)
+        (let ((r (form-ref form "return" "")))
+          (cond
+            ((and (string? r)
+                  (>= (string-length r) 6)
+                  (string=? (substring r 0 6) "/feeds"))
+             r)
+            (else default))))
+
       ;; Reconstructs a /feeds/pinned URL carrying the filter values
       ;; posted in `form`. Used after bulk pinned actions so the user
       ;; lands on the same view they came from. Defined up front because
@@ -1493,24 +1571,22 @@
       (router-add! router "POST" "/feeds/entry/:id/pin"
         (require-auth auth
           (lambda (req params)
-            (let ((id (string->number (params-ref params "id"))))
+            (let ((id   (string->number (params-ref params "id")))
+                  (form (parse-www-form (or (http-request-body req) ""))))
               (when id (pin-entry! cfg id))
               (make-http-response 302
-                (list (cons "Location"
-                            ;; Pin from the feeds list → stay on feeds;
-                            ;; pin from pinned (rare; e.g. re-pin) →
-                            ;; stay on pinned. We don't have referer
-                            ;; handling, so default to /feeds.
-                            "/feeds"))
+                (list (cons "Location" (safe-return form "/feeds")))
                 "")))))
 
       (router-add! router "POST" "/feeds/entry/:id/unpin"
         (require-auth auth
           (lambda (req params)
-            (let ((id (string->number (params-ref params "id"))))
+            (let ((id   (string->number (params-ref params "id")))
+                  (form (parse-www-form (or (http-request-body req) ""))))
               (when id (unpin-entry! cfg id))
               (make-http-response 302
-                (list (cons "Location" "/feeds/pinned")) "")))))
+                (list (cons "Location" (safe-return form "/feeds/pinned")))
+                "")))))
 
       (router-add! router "POST" "/feeds/pinned/add"
         (require-auth auth

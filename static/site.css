@@ -657,6 +657,38 @@ p.flash {
     }
 }
 
+/* --- collapsible filter / add panels (mobile) -------------------- */
+
+/* Hide the checkboxes that drive the pure-CSS toggle. */
+.filters-toggle, .add-toggle { display: none; }
+
+/* Cog / plus icons. Hidden on desktop; shown on narrow viewports. */
+.filters-cog, .add-cog {
+    display: none;
+    cursor: pointer;
+    user-select: none;
+    color: var(--fg-muted);
+    font-size: 1.4rem;
+    line-height: 1;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid transparent;
+    border-radius: 4px;
+}
+.filters-cog:hover, .add-cog:hover {
+    color: var(--fg);
+    border-color: var(--border);
+}
+
+/* On desktop the wraps are always visible — they're regular flow. */
+.filters-wrap, .add-wrap { display: block; }
+
+@media (max-width: 720px) {
+    .filters-cog, .add-cog { display: inline-flex; align-items: center; }
+    .filters-wrap, .add-wrap { display: none; }
+    .filters-toggle:checked ~ .filters-wrap { display: block; }
+    .add-toggle:checked ~ .add-wrap { display: block; }
+}
+
 li.feed-entry .entry-link {
     color: var(--fg);
     text-decoration: none;
