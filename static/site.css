@@ -1621,3 +1621,364 @@ nav.top { position: relative; }
     padding: 0.1rem 0.5rem;
     cursor: pointer;
 }
+
+/* ============================================================
+ * Calendar
+ * ============================================================ */
+
+body.calendar-page main { max-width: none; }
+
+/* View switcher and prev/next nav */
+nav.cal-views {
+    display: inline-flex;
+    gap: 0.25rem;
+    margin: 0.5rem 0 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+nav.cal-views a {
+    padding: 0.35rem 0.75rem;
+    color: var(--fg);
+    text-decoration: none;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+}
+nav.cal-views a:last-child { border-right: none; }
+nav.cal-views a.active {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+
+nav.cal-nav {
+    display: inline-flex;
+    gap: 0.5rem;
+    margin-left: 0.75rem;
+    align-items: center;
+}
+nav.cal-nav a {
+    color: var(--fg-muted);
+    text-decoration: none;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+}
+
+.cal-month-label {
+    font-weight: 600;
+    color: var(--fg-muted);
+}
+
+/* Quick-add form */
+form.cal-add {
+    display: block;
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+form.cal-add h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+    color: var(--fg-muted);
+}
+form.cal-add label.cal-quick-label {
+    display: block;
+    margin: 0 0 0.4rem;
+}
+form.cal-add input[type=text],
+form.cal-add input[type=date],
+form.cal-add input[type=time],
+form.cal-add textarea,
+form.cal-add select {
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 4px;
+    font: inherit;
+    width: 100%;
+    box-sizing: border-box;
+}
+form.cal-add input[type=color] {
+    width: 2.4rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid var(--border);
+}
+form.cal-add button[type=submit] {
+    margin-top: 0.6rem;
+}
+
+.cal-preview {
+    min-height: 1.4em;
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+    margin: 0.25rem 0 0.5rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    background: var(--bg);
+}
+.cal-preview:empty { background: transparent; padding: 0; }
+.cal-preview .pv-chip {
+    display: inline-block;
+    background: var(--bg-code);
+    border-radius: 3px;
+    padding: 0 0.4rem;
+    margin-right: 0.3rem;
+    color: var(--fg);
+}
+
+details.cal-fallback {
+    margin-top: 0.6rem;
+    border-top: 1px dashed var(--border);
+    padding-top: 0.5rem;
+}
+details.cal-fallback > summary {
+    color: var(--fg-muted);
+    cursor: pointer;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+details.cal-fallback label {
+    display: inline-block;
+    margin: 0.25rem 0.75rem 0.25rem 0;
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+}
+details.cal-fallback label.cb {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+details.cal-fallback label input { width: auto; min-width: 8rem; }
+
+/* Agenda view */
+.cal-agenda-list { display: grid; gap: 0.75rem; margin-top: 1rem; }
+section.cal-agenda-day {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+}
+.cal-agenda-date {
+    margin: 0 0 0.4rem;
+    font-size: 0.95rem;
+    color: var(--fg-muted);
+    font-weight: 600;
+}
+.cal-wd { color: var(--accent); margin-right: 0.3rem; }
+
+ul.cal-agenda {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 0.25rem;
+}
+li.cal-agenda-item a {
+    display: grid;
+    grid-template-columns: auto 5.5rem 1fr;
+    gap: 0.4rem;
+    align-items: baseline;
+    color: var(--fg);
+    text-decoration: none;
+    padding: 0.3rem 0.4rem;
+    border-radius: 4px;
+}
+li.cal-agenda-item a:hover { background: var(--bg-code); }
+.cal-swatch {
+    display: inline-block;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--fg-muted);
+    align-self: center;
+}
+.cal-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.cal-title { color: var(--fg); }
+.cal-rec  { color: var(--fg-muted); font-size: 0.85em; }
+.cal-loc  { color: var(--fg-muted); font-size: 0.9em; }
+.cal-cat  { color: var(--accent); font-size: 0.85em; }
+
+/* Month grid */
+table.cal-month {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    table-layout: fixed;
+}
+table.cal-month thead th {
+    text-align: left;
+    color: var(--fg-muted);
+    font-weight: 600;
+    padding: 0.25rem 0.4rem;
+    font-size: 0.85rem;
+    border-bottom: 1px solid var(--border);
+}
+table.cal-month td {
+    vertical-align: top;
+    border: 1px solid var(--border);
+    padding: 0.25rem;
+    background: var(--bg-card);
+    height: 6.5rem;
+    position: relative;
+    overflow: hidden;
+}
+td.cal-cell.out { background: var(--bg); }
+td.cal-cell.out .cal-cell-date { color: var(--fg-muted); opacity: 0.6; }
+.cal-cell-date {
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+    margin-bottom: 0.2rem;
+}
+.cal-add-here {
+    position: absolute;
+    bottom: 2px;
+    right: 4px;
+    color: var(--fg-muted);
+    text-decoration: none;
+    font-size: 1rem;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 100ms;
+}
+td.cal-cell:hover .cal-add-here { opacity: 0.7; }
+a.cal-chip {
+    display: block;
+    font-size: 0.8rem;
+    padding: 0.1rem 0.35rem;
+    margin-bottom: 0.15rem;
+    border-radius: 3px;
+    background: var(--bg-code);
+    color: var(--fg);
+    text-decoration: none;
+    border-left: 3px solid var(--accent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+a.cal-chip .cal-chip-time {
+    color: var(--fg-muted);
+    margin-right: 0.2rem;
+    font-variant-numeric: tabular-nums;
+}
+.cal-more { font-size: 0.75rem; color: var(--fg-muted); }
+
+/* Week view */
+.cal-week {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+section.cal-week-day {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.4rem 0.5rem;
+    min-width: 0;
+}
+section.cal-week-day h3 {
+    margin: 0 0 0.3rem;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+    font-weight: 600;
+}
+
+/* Detail page */
+section.cal-detail-meta p { margin: 0.25rem 0; color: var(--fg-muted); }
+section.cal-detail-meta .cal-notes {
+    white-space: pre-wrap;
+    color: var(--fg);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 0.7rem;
+}
+
+form.cal-edit label,
+form.cal-edit label.cb {
+    display: block;
+    margin: 0.35rem 0;
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+}
+form.cal-edit input[type=text],
+form.cal-edit input[type=datetime-local],
+form.cal-edit textarea {
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 4px;
+    font: inherit;
+    box-sizing: border-box;
+}
+
+/* Floating action button on mobile to focus the quick-add input */
+.cal-fab {
+    display: none;
+}
+
+/* Mobile: bottom sheet for the quick-add form */
+@media (max-width: 40rem) {
+    body.calendar-page form.cal-add {
+        /* By default the form is rendered inline; the JS layer
+         * promotes it to a slide-up sheet when the FAB is tapped.
+         * Add fallback: keep inline form visible without JS. */
+    }
+    .cal-fab {
+        display: inline-flex;
+        position: fixed;
+        right: 1rem;
+        bottom: 1rem;
+        z-index: 30;
+        width: 3.2rem;
+        height: 3.2rem;
+        border-radius: 50%;
+        background: var(--accent);
+        color: var(--accent-fg);
+        font-size: 1.6rem;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+        cursor: pointer;
+    }
+
+    /* Sheet mode: when JS promotes the form, body gets cal-sheet-open
+     * and the form takes over the bottom of the viewport. */
+    body.cal-sheet-open form.cal-add {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        z-index: 40;
+        margin: 0;
+        max-height: 85vh;
+        overflow: auto;
+        border-radius: 10px 10px 0 0;
+        box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.25);
+    }
+    body.cal-sheet-backdrop::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 35;
+    }
+
+    /* Month cells get more compact */
+    table.cal-month td { height: 4.6rem; padding: 0.15rem; }
+    a.cal-chip { font-size: 0.7rem; }
+    .cal-cell-date { font-size: 0.75rem; }
+
+    /* Week view stacks */
+    .cal-week { grid-template-columns: 1fr; }
+
+    li.cal-agenda-item a {
+        grid-template-columns: auto 4.5rem 1fr;
+    }
+}

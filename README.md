@@ -22,6 +22,9 @@ state. The features it carries are the ones I use day to day:
   public hosting at `/f/<name>`)
 * a grocery list with multiple shops and per-shop item ordering
   (drag-to-reorder on touch + mouse)
+* a personal calendar (month / week / agenda views, quick-add with
+  natural-language parsing in English and German, minimal recurrence,
+  ICS export)
 
 Everything except a few public surfaces (`/`, `/p/<slug>`, `/login`,
 `/f/<name>`, `/s/<code>`, `/poll/<slug>`, `/healthz`, `/static/*`,

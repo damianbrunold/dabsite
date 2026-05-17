@@ -45,7 +45,8 @@
         ("/polls"     "Polls"   polls)
         ("/tracker"   "Tracker" tracker)
         ("/files"     "Files"   files)
-        ("/grocery"   "Grocery" grocery)))
+        ("/grocery"   "Grocery"  grocery)
+        ("/calendar"  "Calendar" calendar)))
 
     (define (nav-link-sxml entry active)
       (let ((href (car entry))

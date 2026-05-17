@@ -21,6 +21,7 @@
           (dabsite tracker)
           (dabsite files)
           (dabsite grocery)
+          (dabsite calendar)
           (scm log))
   (export build-router
           build-static-router
@@ -104,6 +105,7 @@
         (install-tracker-routes!   router db-cfg auth)
         (install-files-routes!     router db-cfg auth files-dir)
         (install-grocery-routes!   router db-cfg auth)
+        (install-calendar-routes!  router db-cfg auth)
         ;; static is registered last so the dynamic routes match first.
         (install-static-routes! router static-dir)
         router))
