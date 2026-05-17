@@ -1,5 +1,6 @@
 (define-library (dabsite db)
   (import (scheme base)
+          (scheme time)
           (scm database postgres)
           (rename (scm database migrations)
                   (run-migrations! migrations-run!))
@@ -14,26 +15,49 @@
           run-migrations!)
   (begin
 
-    ;; A db-config is just an opaque vector of connection parameters.
-    ;; Features should never touch (scm database postgres) directly;
-    ;; they go through with-db / db-exec / db-query.
+    ;; A db-config carries the connection params plus an attached
+    ;; connection pool. Features go through with-db / db-exec /
+    ;; db-query and never touch the pool directly.
 
     (define-record-type db-config
-      (make-db-config host port user password database)
+      (%make-db-config-record host port user password database pool)
       db-config?
       (host     db-config-host)
       (port     db-config-port)
       (user     db-config-user)
       (password db-config-password)
-      (database db-config-database))
+      (database db-config-database)
+      (pool     db-config-pool))
 
+    (define default-pool-capacity 8)
+
+    (define (make-db-config host port user password database . opt)
+      "Create a db-config and its backing connection pool. The optional
+       argument is the pool capacity (default 8)."
+      (let ((capacity (cond ((pair? opt) (car opt))
+                            (else default-pool-capacity))))
+        (%make-db-config-record
+          host port user password database
+          (make-pg-pool host port user password database capacity))))
+
+    ;; TEMPORARY instrumentation — every with-db logs checkout vs work
+    ;; time. With pooling, checkout should be sub-ms once the pool is
+    ;; warm; the first N requests pay the connect cost (the pool grows
+    ;; lazily to capacity). Strip the timing wrapper once we are done.
     (define (with-db cfg proc)
-      (with-pg-connection (db-config-host cfg)
-                          (db-config-port cfg)
-                          (db-config-user cfg)
-                          (db-config-password cfg)
-                          (db-config-database cfg)
-                          proc))
+      (let ((t0 (current-jiffy)))
+        (with-pg-pool-connection (db-config-pool cfg)
+          (lambda (conn)
+            (let* ((t-conn (current-jiffy))
+                   (result (proc conn))
+                   (t-end  (current-jiffy)))
+              (log-info "perf"
+                        (string-append "db checkout="
+                                       (number->string (- t-conn t0))
+                                       "us work="
+                                       (number->string (- t-end t-conn))
+                                       "us"))
+              result)))))
 
     (define (db-exec cfg sql)
       (with-db cfg (lambda (c) (pg-exec c sql))))

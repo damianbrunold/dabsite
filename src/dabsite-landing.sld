@@ -1,6 +1,7 @@
 (define-library (dabsite landing)
   (import (scheme base)
           (scheme write)
+          (scheme time)
           (srfi 13)
           (scm database postgres)
           (scm net http request)
@@ -8,6 +9,7 @@
           (scm net http route)
           (scm net http forms)
           (scm html builder)
+          (scm log)
           (dabsite db)
           (dabsite auth)
           (dabsite views)
@@ -110,25 +112,42 @@
 
     ;; --- views ---
 
+    ;; TEMPORARY instrumentation — one perf line per page-view request,
+    ;; breaking out DB lookup, cache-or-render, SXML→string, and the
+    ;; surrounding render-page shell. Revert once we have the numbers.
     (define (render-page-view req auth cfg slug active)
-      (let ((page (page-by-slug cfg slug)))
+      (let* ((t0    (current-jiffy))
+             (page  (page-by-slug cfg slug))
+             (t-db  (current-jiffy)))
         (cond
           ((not page) (render-error 404 "Page not found."))
           (else
            (let* ((title (page-field page "title"))
                   (html  (cached-or-render cfg page))
+                  (t-cache (current-jiffy))
                   (body  `(article (@ (class "page"))
                             ,(raw html)
                             ,@(if (authed? auth req)
                                   `((p (@ (class "page-actions"))
                                        (a (@ (href ,(string-append "/edit/" slug)))
                                           "Edit")))
-                                  '()))))
-             (html-response
-               (render-page req auth
-                            (list (cons 'title title)
-                                  (cons 'active active))
-                            (html->string body))))))))
+                                  '())))
+                  (body-html (html->string body))
+                  (t-sxml (current-jiffy))
+                  (page-html (render-page req auth
+                                          (list (cons 'title title)
+                                                (cons 'active active))
+                                          body-html))
+                  (t-page (current-jiffy)))
+             (log-info "perf"
+                       (string-append
+                         "page slug=" slug
+                         " db="    (number->string (- t-db t0))    "us"
+                         " cache=" (number->string (- t-cache t-db)) "us"
+                         " sxml="  (number->string (- t-sxml t-cache)) "us"
+                         " shell=" (number->string (- t-page t-sxml)) "us"
+                         " total=" (number->string (- t-page t0))   "us"))
+             (html-response page-html))))))
 
     (define (render-edit-view req auth cfg slug)
       (let* ((existing (page-by-slug cfg slug))
