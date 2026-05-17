@@ -14,6 +14,7 @@
           (scm net http route)
           (scm net http multipart)
           (scm html)
+          (scm uri)
           (scm log)
           (dabsite db)
           (dabsite auth)

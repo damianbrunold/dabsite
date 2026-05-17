@@ -13,6 +13,7 @@
           (scm net http route)
           (scm net http forms)
           (scm html)
+          (scm uri)
           (scm log)
           (scm duration)
           (scm datetime)
