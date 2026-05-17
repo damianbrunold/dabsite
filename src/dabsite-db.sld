@@ -1,6 +1,5 @@
 (define-library (dabsite db)
   (import (scheme base)
-          (scheme time)
           (scm database postgres)
           (rename (scm database migrations)
                   (run-migrations! migrations-run!))
@@ -40,24 +39,8 @@
           host port user password database
           (make-pg-pool host port user password database capacity))))
 
-    ;; TEMPORARY instrumentation — every with-db logs checkout vs work
-    ;; time. With pooling, checkout should be sub-ms once the pool is
-    ;; warm; the first N requests pay the connect cost (the pool grows
-    ;; lazily to capacity). Strip the timing wrapper once we are done.
     (define (with-db cfg proc)
-      (let ((t0 (current-jiffy)))
-        (with-pg-pool-connection (db-config-pool cfg)
-          (lambda (conn)
-            (let* ((t-conn (current-jiffy))
-                   (result (proc conn))
-                   (t-end  (current-jiffy)))
-              (log-info "perf"
-                        (string-append "db checkout="
-                                       (number->string (- t-conn t0))
-                                       "us work="
-                                       (number->string (- t-end t-conn))
-                                       "us"))
-              result)))))
+      (with-pg-pool-connection (db-config-pool cfg) proc))
 
     (define (db-exec cfg sql)
       (with-db cfg (lambda (c) (pg-exec c sql))))
