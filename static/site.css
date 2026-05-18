@@ -660,8 +660,9 @@ p.flash {
 }
 @media (max-width: 720px) {
     form.pinned-add {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr;
     }
+    form.pinned-add input { min-width: 0; width: 100%; box-sizing: border-box; }
 }
 
 /* --- collapsible filter / add panels (mobile) -------------------- */
@@ -1416,7 +1417,7 @@ nav.top { position: relative; }
         border-radius: 4px;
     }
 
-    header.feeds-head h1 { font-size: 1.3rem; flex-basis: 100%; }
+    header.feeds-head h1 { font-size: 1.3rem; }
 
     /* Quick-add and other "feed-new" forms collapse to one column. */
     form.feed-new,

@@ -89,9 +89,11 @@
     (define (nav-sxml req auth active)
       (let ((authed (authed? auth req)))
         `(nav (@ (class "top"))
-              (div (@ (class "brand"))
-                   (a (@ (href "/"))
-                      (span "Damian") " " (span "Brunold")))
+              ,@(if authed
+                    '()
+                    `((div (@ (class "brand"))
+                           (a (@ (href "/"))
+                              (span "Damian") " " (span "Brunold")))))
               ;; Authed nav: hamburger + link list. Unauthed view has
               ;; no other destinations, so the link list is omitted.
               ,@(if authed
