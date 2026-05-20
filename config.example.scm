@@ -45,4 +45,7 @@
 ;; --- Localisation ---
 ;; BCP 47 language tag emitted as <html lang="…"> for the site shell.
 ;; Individual pages can override via the 'lang opt to render-page.
-(define site-lang "en")
+;; Named with a "default-" prefix so it doesn't collide with the
+;; (dabsite auth) `site-lang` accessor when config is `load`ed into
+;; server.scm's module (cell-indirected bindings share across imports).
+(define default-site-lang "en")

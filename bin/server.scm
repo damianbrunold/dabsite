@@ -58,7 +58,7 @@
 (define auth
   (make-auth cookie-name cookie-secret cookie-max-age auth-passphrase-hash))
 
-(set-site-lang! site-lang)
+(set-site-lang! default-site-lang)
 
 (serve http-port
        http-host
