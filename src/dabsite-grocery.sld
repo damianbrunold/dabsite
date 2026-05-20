@@ -220,12 +220,14 @@
         (and (pair? rs) (car rs))))
 
     (define (create-list! cfg shop-id)
-      ;; shop-id may be #f (default shop) — pg-format-sql renders #f as NULL.
+      ;; shop-id may be #f (default shop). pg-format-sql now renders
+      ;; #f as FALSE, so coerce missing shop-id to the 'null sentinel
+      ;; that produces SQL NULL.
       (with-db cfg
         (lambda (c)
           (let ((res (pg-query c
                        "INSERT INTO grocery_lists (shop_id) VALUES ($1) RETURNING id"
-                       shop-id)))
+                       (or shop-id 'null))))
             (string->number (vector-ref (car (pg-result-rows res)) 0))))))
 
     (define (delete-list! cfg id)
