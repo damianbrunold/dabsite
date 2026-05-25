@@ -95,6 +95,23 @@ the file `src/dabsite-app.sld` — segments joined with `-`.
    the rest of the nav opens up.
 
 
+## Dev server with auto-reload
+
+For editing, `bin/dev-server.scm` is a small supervisor that runs the
+unmodified `bin/server.scm` as a child and restarts it whenever a
+watched file changes (every `*.sld` under `src/`, plus `bin/server.scm`
+and the config file). Modeled on Flask's reloader.
+
+```
+scm bin/dev-server.scm                 # uses ./config.scm
+scm bin/dev-server.scm path/to/cfg.scm
+```
+
+Child stdout/stderr are inherited, so server logs appear in the same
+terminal alongside `[dev-server]` restart notices. In-flight requests
+are dropped on restart. Use `bin/server.scm` directly in production.
+
+
 ## Tests
 
 Unit tests cover the util library, the markdown renderer, the auth
