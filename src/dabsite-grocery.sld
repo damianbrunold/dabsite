@@ -430,7 +430,9 @@
           ((not l) (render-error 404 "List not found."))
           (else
            (let* ((shop-id-str (row-field l "shop_id"))
-                  (shop-id (string->number shop-id-str))
+                  (shop-id (and (string? shop-id-str)
+                                (not (string=? shop-id-str ""))
+                                (string->number shop-id-str)))
                   (entries (list-entries cfg list-id shop-id))
                   (catalog (shop-items cfg shop-id))
                   (entry-by-item-id
