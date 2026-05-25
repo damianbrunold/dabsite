@@ -15,7 +15,8 @@
           (dabsite db)
           (dabsite util)
           (dabsite auth)
-          (dabsite views))
+          (dabsite views)
+          (dabsite events))
   (export install-calendar-routes!
           ;; pure helpers exposed for tests
           parse-quick-add
@@ -919,6 +920,46 @@
           (append-map (lambda (r) (event->occurrences r cats from-date to-date))
                       rows))))
 
+    (define (synthetic-event-occurrences cfg from-date to-date)
+      ;; Synthetic all-day occurrences sourced from the events table
+      ;; (training, joggen, ... blutdruck, gewicht). Each (day, kind)
+      ;; pair becomes one chip; the link points to /events. The id
+      ;; is a non-numeric token so the existing /calendar/<id> route
+      ;; won't match it — rendering uses the 'href field instead.
+      (let ((from-s (format-date from-date))
+            (to-s   (format-date to-date)))
+        (map (lambda (row)
+               (let* ((day  (row-field row "day"))
+                      (kind (row-field row "kind"))
+                      (v1   (row-field row "v1"))
+                      (v2   (row-field row "v2"))
+                      (v3   (row-field row "v3"))
+                      (d    (parse-iso-date day))
+                      (col  (event-kind-colour kind))
+                      (lbl  (format-event-label kind v1 v2 v3)))
+                 (list (cons 'id (string-append "ev-" kind "-" day))
+                       (cons 'href "/events")
+                       (cons 'title lbl)
+                       (cons 'location "")
+                       (cons 'category "")
+                       (cons 'colour "")
+                       (cons 'extra-class (string-append "ev-k-" kind))
+                       (cons 'all-day #t)
+                       (cons 'date d)
+                       (cons 'starts-time "")
+                       (cons 'ends-time "")
+                       (cons 'recurring #f)
+                       (cons 'synthetic #t))))
+             (events-for-date-range cfg from-s to-s))))
+
+    (define (occurrences-with-events cfg from-date to-date show-events?)
+      (let ((base (occurrences-in-range cfg from-date to-date)))
+        (cond
+          (show-events?
+           (sort-occurrences
+            (append base (synthetic-event-occurrences cfg from-date to-date))))
+          (else base))))
+
     (define (event->occurrences row cats from-date to-date)
       (let* ((id        (row-field row "id"))
              (title     (row-field row "title"))
@@ -1017,30 +1058,42 @@
 
     ;; ---- shared bits ----
 
-    (define (view-switcher current anchor)
+    (define (view-switcher current anchor show-events?)
       `(nav (@ (class "cal-views"))
-            ,(view-link "month"   "Month"  current anchor)
-            ,(view-link "week"    "Week"   current anchor)
-            ,(view-link "agenda"  "Agenda" current anchor)))
+            ,(view-link "month"   "Month"  current anchor show-events?)
+            ,(view-link "week"    "Week"   current anchor show-events?)
+            ,(view-link "agenda"  "Agenda" current anchor show-events?)))
 
-    (define (view-link key label current anchor)
+    (define (events-qs show-events?)
+      (if show-events? "&events=1" ""))
+
+    (define (view-link key label current anchor show-events?)
       `(a (@ (href ,(string-append "/calendar?view=" key
-                                   "&d=" (format-date anchor)))
+                                   "&d=" (format-date anchor)
+                                   (events-qs show-events?)))
              (class ,(if (string=? key current) "active" #f)))
           ,label))
 
-    (define (nav-controls anchor view step-fn)
+    (define (events-toggle-link view anchor show-events?)
+      `(a (@ (class "admin-link")
+             (href ,(string-append "/calendar?view=" view
+                                   "&d=" (format-date anchor)
+                                   (if show-events? "" "&events=1"))))
+          ,(if show-events? "hide events" "show events")))
+
+    (define (nav-controls anchor view step-fn show-events?)
       ;; step-fn: prev/next deltas in days
       (let ((prev (date+days anchor (- (step-fn))))
             (next (date+days anchor (step-fn)))
-            (tdy  '()))
+            (suf  (events-qs show-events?)))
         `(nav (@ (class "cal-nav"))
               (a (@ (href ,(string-append "/calendar?view=" view
-                                          "&d=" (format-date prev))))
+                                          "&d=" (format-date prev) suf)))
                  ,(raw "← prev"))
-              (a (@ (href ,(string-append "/calendar?view=" view))) "today")
+              (a (@ (href ,(string-append "/calendar?view=" view suf)))
+                 "today")
               (a (@ (href ,(string-append "/calendar?view=" view
-                                          "&d=" (format-date next))))
+                                          "&d=" (format-date next) suf)))
                  ,(raw "next →")))))
 
     ;; ---- quick-add form ----
@@ -1114,6 +1167,15 @@
     (define (weekday-label date)
       (vector-ref iso-weekday-names (- (weekday-of date) 1)))
 
+    (define (occ-href occ)
+      (let ((p (assq 'href occ)))
+        (cond
+          (p (cdr p))
+          (else (string-append "/calendar/" (cdr (assq 'id occ)))))))
+
+    (define (occ-extra-class occ)
+      (let ((p (assq 'extra-class occ))) (if p (cdr p) "")))
+
     (define (occurrence-row-sxml occ)
       (let* ((id        (cdr (assq 'id occ)))
              (title     (cdr (assq 'title occ)))
@@ -1131,12 +1193,17 @@
                           (string-append starts-t "–" ends-t))
                          (else starts-t))))
         `(li (@ (class "cal-agenda-item"))
-           (a (@ (href ,(string-append "/calendar/" id)))
-              ,@(if (string=? colour "")
-                    '()
-                    `((span (@ (class "cal-swatch")
-                               (style ,(string-append "background:" colour)))
-                            "")))
+           (a (@ (href ,(occ-href occ)))
+              ,@(let ((extra (occ-extra-class occ)))
+                  (cond
+                    ((not (string=? extra ""))
+                     `((span (@ (class ,(string-append "cal-swatch " extra)))
+                             "")))
+                    ((string=? colour "") '())
+                    (else
+                     `((span (@ (class "cal-swatch")
+                                (style ,(string-append "background:" colour)))
+                             "")))))
               (span (@ (class "cal-time")) ,time-str)
               (span (@ (class "cal-title")) ,title
                     ,@(if recurring?
@@ -1160,10 +1227,10 @@
 
     (define agenda-window-days 30)
 
-    (define (render-agenda req auth cfg anchor cats prefill)
+    (define (render-agenda req auth cfg anchor cats prefill show-events?)
       (let* ((from anchor)
              (to   (date+days anchor (- agenda-window-days 1)))
-             (occs (occurrences-in-range cfg from to))
+             (occs (occurrences-with-events cfg from to show-events?))
              (groups (group-by-date occs))
              (body
                `((header (@ (class "feeds-head"))
@@ -1171,11 +1238,14 @@
                    (a (@ (class "admin-link") (href "/calendar/categories"))
                       "categories")
                    " "
+                   ,(events-toggle-link "agenda" anchor show-events?)
+                   " "
                    (a (@ (class "admin-link") (href "/calendar.ics"))
                       "export ICS"))
-                 ,(view-switcher "agenda" anchor)
+                 ,(view-switcher "agenda" anchor show-events?)
                  ,(nav-controls anchor "agenda"
-                                (lambda () agenda-window-days))
+                                (lambda () agenda-window-days)
+                                show-events?)
                  ,(quick-add-sxml prefill cats)
                  ,(if (null? groups)
                       `(p (@ (class "empty")) "Nothing in this window.")
@@ -1196,10 +1266,11 @@
              (wd    (weekday-of first)))
         (date+days first (- (- wd 1)))))
 
-    (define (render-month req auth cfg anchor cats prefill)
+    (define (render-month req auth cfg anchor cats prefill show-events?)
       (let* ((grid-start (month-grid-start anchor))
              (grid-end   (date+days grid-start (- (* 6 7) 1)))
-             (occs       (occurrences-in-range cfg grid-start grid-end))
+             (occs       (occurrences-with-events cfg grid-start grid-end
+                                                  show-events?))
              (by-day     (group-occs-by-day occs))
              (cells      (build-month-cells grid-start anchor by-day))
              (month-name (string-append (number->string (car anchor))
@@ -1211,10 +1282,12 @@
                    (a (@ (class "admin-link") (href "/calendar/categories"))
                       "categories")
                    " "
+                   ,(events-toggle-link "month" anchor show-events?)
+                   " "
                    (a (@ (class "admin-link") (href "/calendar.ics"))
                       "export ICS"))
-                 ,(view-switcher "month" anchor)
-                 ,(nav-controls anchor "month" (lambda () 30))
+                 ,(view-switcher "month" anchor show-events?)
+                 ,(nav-controls anchor "month" (lambda () 30) show-events?)
                  ,(quick-add-sxml prefill cats)
                  (table (@ (class "cal-month"))
                    (thead (tr ,@(map (lambda (w) `(th ,w))
@@ -1295,11 +1368,15 @@
       (let ((id     (cdr (assq 'id occ)))
             (title  (cdr (assq 'title occ)))
             (colour (cdr (assq 'colour occ)))
+            (extra  (occ-extra-class occ))
             (all-day? (cdr (assq 'all-day occ)))
             (starts-t (cdr (assq 'starts-time occ))))
-        `(a (@ (class "cal-chip")
-               (href ,(string-append "/calendar/" id))
-               (style ,(if (string=? colour "")
+        `(a (@ (class ,(if (string=? extra "")
+                           "cal-chip"
+                           (string-append "cal-chip " extra)))
+               (href ,(occ-href occ))
+               (style ,(if (or (not (string=? extra ""))
+                               (string=? colour ""))
                            #f
                            (string-append "border-left-color:" colour))))
             ,@(if all-day? '() `((span (@ (class "cal-chip-time")) ,starts-t " ")))
@@ -1311,10 +1388,10 @@
       (let ((wd (weekday-of anchor)))
         (date+days anchor (- (- wd 1)))))
 
-    (define (render-week req auth cfg anchor cats prefill)
+    (define (render-week req auth cfg anchor cats prefill show-events?)
       (let* ((from (week-grid-start anchor))
              (to   (date+days from 6))
-             (occs (occurrences-in-range cfg from to))
+             (occs (occurrences-with-events cfg from to show-events?))
              (by-day (group-occs-by-day occs))
              (body
                `((header (@ (class "feeds-head"))
@@ -1322,10 +1399,12 @@
                    (a (@ (class "admin-link") (href "/calendar/categories"))
                       "categories")
                    " "
+                   ,(events-toggle-link "week" anchor show-events?)
+                   " "
                    (a (@ (class "admin-link") (href "/calendar.ics"))
                       "export ICS"))
-                 ,(view-switcher "week" anchor)
-                 ,(nav-controls anchor "week" (lambda () 7))
+                 ,(view-switcher "week" anchor show-events?)
+                 ,(nav-controls anchor "week" (lambda () 7) show-events?)
                  ,(quick-add-sxml prefill cats)
                  (div (@ (class "cal-week"))
                    ,@(map (lambda (i)
@@ -1614,13 +1693,14 @@
             (let* ((anchor  (anchor-of-request req cfg))
                    (view    (param-or req "view" "agenda"))
                    (cats    (list-categories cfg))
+                   (show-ev? (string=? (param-or req "events" "") "1"))
                    (prefill (let ((d (param-or req "prefill_date" "")))
                               (and (non-empty-string? d)
                                    (list (cons 'text d))))))
               (cond
-                ((string=? view "month")  (render-month  req auth cfg anchor cats prefill))
-                ((string=? view "week")   (render-week   req auth cfg anchor cats prefill))
-                (else                     (render-agenda req auth cfg anchor cats prefill)))))))
+                ((string=? view "month")  (render-month  req auth cfg anchor cats prefill show-ev?))
+                ((string=? view "week")   (render-week   req auth cfg anchor cats prefill show-ev?))
+                (else                     (render-agenda req auth cfg anchor cats prefill show-ev?)))))))
 
       ;; -- POST /calendar (quick add) --
       (router-add! router "POST" "/calendar"

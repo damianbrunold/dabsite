@@ -1983,3 +1983,182 @@ form.cal-edit textarea {
         grid-template-columns: auto 4.5rem 1fr;
     }
 }
+
+/* ---------------- events page ---------------- */
+
+/* Per-kind colour tokens. Applied to .ev-tap (tap buttons),
+ * .ev-value-form (forms), .ev-swatch (recent list & calendar
+ * overlay), and .cal-chip (calendar overlay). CSP forbids inline
+ * style="...", so all colour comes through these classes. */
+.ev-k-training  { --ev-colour: #2e7d32; }
+.ev-k-joggen    { --ev-colour: #1565c0; }
+.ev-k-wandern   { --ev-colour: #6d4c41; }
+.ev-k-spazieren { --ev-colour: #558b2f; }
+.ev-k-migraene  { --ev-colour: #c62828; }
+.ev-k-blutdruck { --ev-colour: #7b1fa2; }
+.ev-k-gewicht   { --ev-colour: #ef6c00; }
+
+/* Swatch coloured by its --ev-colour token. */
+span.ev-swatch.ev-k-training,
+span.ev-swatch.ev-k-joggen,
+span.ev-swatch.ev-k-wandern,
+span.ev-swatch.ev-k-spazieren,
+span.ev-swatch.ev-k-migraene,
+span.ev-swatch.ev-k-blutdruck,
+span.ev-swatch.ev-k-gewicht { background: var(--ev-colour); }
+
+/* Calendar overlay chips: paint border-left from the token. */
+a.cal-chip.ev-k-training,
+a.cal-chip.ev-k-joggen,
+a.cal-chip.ev-k-wandern,
+a.cal-chip.ev-k-spazieren,
+a.cal-chip.ev-k-migraene,
+a.cal-chip.ev-k-blutdruck,
+a.cal-chip.ev-k-gewicht { border-left-color: var(--ev-colour); }
+
+h3.ev-form-title { color: var(--ev-colour); }
+
+body.events-page main { padding-bottom: 4rem; }
+
+section.ev-quickbar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: 0.6rem;
+    margin: 1rem 0;
+}
+
+form.ev-quick { margin: 0; }
+
+button.ev-tap {
+    width: 100%;
+    min-height: 4.5rem;
+    border: 2px solid var(--ev-colour, var(--accent));
+    background: var(--bg-card);
+    color: var(--ev-colour, var(--accent));
+    font-size: 1.05rem;
+    font-weight: 600;
+    border-radius: 12px;
+    cursor: pointer;
+    padding: 0.6rem 0.4rem;
+    transition: transform 0.04s ease, background 0.1s ease;
+}
+button.ev-tap:active {
+    transform: scale(0.97);
+    background: var(--ev-colour, var(--accent));
+    color: var(--bg-card);
+}
+
+section.ev-value-forms {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0.8rem;
+    margin: 1rem 0;
+}
+
+form.ev-value-form {
+    background: var(--bg-card);
+    border: 1px solid var(--ev-colour, var(--accent));
+    border-radius: 10px;
+    padding: 0.8rem;
+}
+form.ev-value-form h3 {
+    margin: 0 0 0.4rem 0;
+    font-size: 1rem;
+}
+.ev-bp-row, .ev-w-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: end;
+}
+.ev-bp-row label, .ev-w-row label {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+}
+.ev-bp-row input, .ev-w-row input {
+    font-size: 1.2rem;
+    padding: 0.5rem;
+    text-align: center;
+    width: 100%;
+}
+button.ev-record {
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.7rem;
+    font-size: 1rem;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+form.ev-backfill {
+    background: var(--bg-card);
+    border: 1px solid var(--bg-code);
+    border-radius: 10px;
+    padding: 0.8rem;
+    margin: 1rem 0;
+}
+form.ev-backfill h3 { margin: 0 0 0.4rem 0; font-size: 0.95rem; color: var(--fg-muted); }
+form.ev-backfill label { display: block; margin: 0.3rem 0; font-size: 0.85rem; }
+form.ev-backfill input,
+form.ev-backfill select { width: 100%; padding: 0.4rem; }
+.ev-bf-vals { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.4rem; }
+form.ev-backfill button { margin-top: 0.6rem; padding: 0.5rem 1rem; }
+
+section.ev-recent-wrap h2 { margin-top: 1.5rem; }
+table.ev-recent { width: 100%; border-collapse: collapse; }
+table.ev-recent th, table.ev-recent td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--bg-code);
+}
+.ev-swatch {
+    display: inline-block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 2px;
+    vertical-align: middle;
+}
+.ev-when-c { white-space: nowrap; color: var(--fg-muted); font-size: 0.85rem; }
+.ev-kind { white-space: nowrap; }
+.ev-val { font-variant-numeric: tabular-nums; }
+
+/* ---------------- events report ---------------- */
+
+div.ev-chart-wrap {
+    margin: 1rem 0;
+    background: var(--bg-card);
+    border: 1px solid var(--bg-code);
+    border-radius: 8px;
+    padding: 0.5rem;
+}
+svg.ev-chart { display: block; width: 100%; height: auto; }
+ul.ev-legend {
+    list-style: none;
+    padding: 0; margin: 0.4rem 0 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    font-size: 0.85rem;
+}
+ul.ev-legend li { display: inline-flex; align-items: center; gap: 0.3rem; }
+p.ev-chart-x { font-size: 0.8rem; color: var(--fg-muted); margin: 0.4rem 0 0 0; }
+
+table.ev-report { width: 100%; border-collapse: collapse; }
+table.ev-report th, table.ev-report td {
+    text-align: left;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--bg-code);
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+    button.ev-tap { min-height: 5.4rem; font-size: 1.15rem; }
+    .ev-bp-row input, .ev-w-row input { font-size: 1.35rem; }
+    section.ev-quickbar { grid-template-columns: 1fr 1fr; }
+}
+
