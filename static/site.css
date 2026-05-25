@@ -1995,6 +1995,7 @@ form.cal-edit textarea {
 .ev-k-wandern   { --ev-colour: #6d4c41; }
 .ev-k-spazieren { --ev-colour: #558b2f; }
 .ev-k-migraene  { --ev-colour: #c62828; }
+.ev-k-kirche    { --ev-colour: #5e35b1; }
 .ev-k-blutdruck { --ev-colour: #7b1fa2; }
 .ev-k-gewicht   { --ev-colour: #ef6c00; }
 
@@ -2004,6 +2005,7 @@ span.ev-swatch.ev-k-joggen,
 span.ev-swatch.ev-k-wandern,
 span.ev-swatch.ev-k-spazieren,
 span.ev-swatch.ev-k-migraene,
+span.ev-swatch.ev-k-kirche,
 span.ev-swatch.ev-k-blutdruck,
 span.ev-swatch.ev-k-gewicht { background: var(--ev-colour); }
 
@@ -2013,6 +2015,7 @@ a.cal-chip.ev-k-joggen,
 a.cal-chip.ev-k-wandern,
 a.cal-chip.ev-k-spazieren,
 a.cal-chip.ev-k-migraene,
+a.cal-chip.ev-k-kirche,
 a.cal-chip.ev-k-blutdruck,
 a.cal-chip.ev-k-gewicht { border-left-color: var(--ev-colour); }
 
@@ -2022,8 +2025,8 @@ body.events-page main { padding-bottom: 4rem; }
 
 section.ev-quickbar {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-    gap: 0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+    gap: 0.5rem;
     margin: 1rem 0;
 }
 
@@ -2031,15 +2034,15 @@ form.ev-quick { margin: 0; }
 
 button.ev-tap {
     width: 100%;
-    min-height: 4.5rem;
+    min-height: 3.4rem;
     border: 2px solid var(--ev-colour, var(--accent));
     background: var(--bg-card);
     color: var(--ev-colour, var(--accent));
-    font-size: 1.05rem;
+    font-size: 0.95rem;
     font-weight: 600;
-    border-radius: 12px;
+    border-radius: 10px;
     cursor: pointer;
-    padding: 0.6rem 0.4rem;
+    padding: 0.5rem 0.3rem;
     transition: transform 0.04s ease, background 0.1s ease;
 }
 button.ev-tap:active {

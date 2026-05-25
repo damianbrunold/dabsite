@@ -38,6 +38,7 @@
         ("wandern"   "Wandern"   "#6d4c41" indicator)
         ("spazieren" "Spazieren" "#558b2f" indicator)
         ("migraene"  "Migräne"   "#c62828" indicator)
+        ("kirche"    "Kirche"    "#5e35b1" indicator)
         ("blutdruck" "Blutdruck" "#7b1fa2" bp)
         ("gewicht"   "Gewicht"   "#ef6c00" weight)))
 
