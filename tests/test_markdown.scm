@@ -36,7 +36,12 @@
   (let ((h (render-markdown "- one\n- two\n- three\n")))
     (test-assert "<ul>"   (contains? h "<ul>"))
     (test-assert "li one" (contains? h "<li>one</li>"))
-    (test-assert "li two" (contains? h "<li>two</li>"))))
+    (test-assert "li two" (contains? h "<li>two</li>")))
+  (let ((h (render-markdown "1. one\n2. two\n3. three\n")))
+    (test-assert "<ol>"   (contains? h "<ol>"))
+    (test-assert "ol li one" (contains? h "<li>one</li>"))
+    (test-assert "ol li two" (contains? h "<li>two</li>"))
+    (test-assert "no ul"  (not (contains? h "<ul>")))))
 
 (test-group "paragraphs"
   (let ((h (render-markdown "first line\nsecond line\n\nnext para\n")))

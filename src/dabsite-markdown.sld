@@ -14,6 +14,8 @@
     ;;   # H1, ## H2, ### H3
     ;;   ```lang  fenced code block  ```
     ;;   - bullet list item   (consecutive lines form one <ul>)
+    ;;   1. ordered list item (consecutive lines form one <ol>;
+    ;;                         any digits + ". " is accepted)
     ;;   blank line separates paragraphs
     ;;   everything else is a paragraph
     ;;
@@ -187,6 +189,23 @@
            (char=? (string-ref line 0) #\-)
            (char=? (string-ref line 1) #\space)))
 
+    (define (ordered-line-prefix-length line)
+      ;; Returns the length of a leading "<digits>. " prefix, or #f.
+      (let ((n (string-length line)))
+        (let loop ((i 0))
+          (cond
+            ((>= i n) #f)
+            ((char-numeric? (string-ref line i)) (loop (+ i 1)))
+            ((and (> i 0)
+                  (char=? (string-ref line i) #\.)
+                  (< (+ i 1) n)
+                  (char=? (string-ref line (+ i 1)) #\space))
+             (+ i 2))
+            (else #f)))))
+
+    (define (ordered-line? line)
+      (and (ordered-line-prefix-length line) #t))
+
     (define (fence-line? line)
       (and (>= (string-length line) 3)
            (string=? (substring line 0 3) "```")))
@@ -215,6 +234,17 @@
           (write-string "</li>\n" out))
         items)
       (write-string "</ul>\n" out))
+
+    (define (render-ordered-list items out)
+      (write-string "<ol>\n" out)
+      (for-each
+        (lambda (line)
+          (let ((p (ordered-line-prefix-length line)))
+            (write-string "  <li>" out)
+            (render-inline (substring line p (string-length line)) out)
+            (write-string "</li>\n" out)))
+        items)
+      (write-string "</ol>\n" out))
 
     (define (render-code-block lines out)
       (write-string "<pre><code>" out)
@@ -262,6 +292,13 @@
                 (render-list (reverse buf) out)
                 (loop rest))
                (else (collect (cdr rest) (cons (car rest) buf))))))
+          ((ordered-line? (car ls))
+           (let collect ((rest ls) (buf '()))
+             (cond
+               ((or (null? rest) (not (ordered-line? (car rest))))
+                (render-ordered-list (reverse buf) out)
+                (loop rest))
+               (else (collect (cdr rest) (cons (car rest) buf))))))
           (else
            ;; Paragraph: consume until blank, heading, fence, or list.
            (let collect ((rest ls) (buf '()))
@@ -270,7 +307,8 @@
                     (blank-line? (car rest))
                     (heading-prefix (car rest))
                     (fence-line? (car rest))
-                    (bullet-line? (car rest)))
+                    (bullet-line? (car rest))
+                    (ordered-line? (car rest)))
                 (render-paragraph (reverse buf) out)
                 (loop rest))
                (else (collect (cdr rest) (cons (car rest) buf)))))))))
