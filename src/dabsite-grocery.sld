@@ -233,43 +233,109 @@
     (define (delete-list! cfg id)
       (exec cfg "DELETE FROM grocery_lists WHERE id = $1" (list id)))
 
-    ;; Entries on a list, ordered per the list's shop. For the default
-    ;; shop, alphabetical.
-    (define (list-entries cfg list-id shop-id)
-      (cond
-        (shop-id
-         (alist-rows cfg
-           (string-append
-             "SELECT e.id::text AS id, i.id::text AS item_id, i.name, "
-             "       e.qty::text AS qty, "
-             "       CASE WHEN e.bought THEN 'yes' ELSE 'no' END AS bought "
-             "FROM grocery_list_entries e "
-             "JOIN grocery_items i ON i.id = e.item_id "
-             "WHERE e.list_id = $1 "
-             "ORDER BY (SELECT si.position FROM grocery_shop_items si "
-             "          WHERE si.shop_id = $2 AND si.item_id = e.item_id), "
-             "         lower(i.name)")
-           (list list-id shop-id)))
-        (else
-         (alist-rows cfg
-           (string-append
-             "SELECT e.id::text AS id, i.id::text AS item_id, i.name, "
-             "       e.qty::text AS qty, "
-             "       CASE WHEN e.bought THEN 'yes' ELSE 'no' END AS bought "
-             "FROM grocery_list_entries e "
-             "JOIN grocery_items i ON i.id = e.item_id "
-             "WHERE e.list_id = $1 "
-             "ORDER BY lower(i.name)")
-           (list list-id)))))
+    ;; Entries on a list, in the list's own stored order. item_id and
+    ;; the catalog row may be NULL for ad-hoc entries; in that case the
+    ;; entry's own name column is the display name.
+    (define (list-entries cfg list-id)
+      (alist-rows cfg
+        (string-append
+          "SELECT e.id::text AS id, "
+          "       COALESCE(i.id::text, '') AS item_id, "
+          "       COALESCE(i.name, e.name) AS name, "
+          "       e.qty::text AS qty, "
+          "       CASE WHEN e.bought THEN 'yes' ELSE 'no' END AS bought "
+          "FROM grocery_list_entries e "
+          "LEFT JOIN grocery_items i ON i.id = e.item_id "
+          "WHERE e.list_id = $1 "
+          "ORDER BY e.position, e.id")
+        (list list-id)))
 
+    ;; Insert a catalog item into the list at the slot that matches the
+    ;; shop's (or alphabetical) ordering among catalog entries already
+    ;; present. If the entry already exists, just bump qty.
     (define (add-or-inc! cfg list-id item-id)
+      (with-db cfg
+        (lambda (c)
+          (pg-exec c "BEGIN")
+          (guard (exn (#t
+                       (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
+                       (raise exn)))
+          (let ((upd (pg-query c
+                       (string-append
+                         "UPDATE grocery_list_entries "
+                         "SET qty = qty + 1, bought = false "
+                         "WHERE list_id = $1 AND item_id = $2 "
+                         "RETURNING id")
+                       list-id item-id)))
+            (when (null? (pg-result-rows upd))
+              (let* ((pres (pg-query c
+                             (string-append
+                               "WITH tl AS ("
+                               "  SELECT shop_id FROM grocery_lists WHERE id = $1), "
+                               "new_alpha AS ("
+                               "  SELECT lower(name) AS a FROM grocery_items WHERE id = $2), "
+                               "new_shop_pos AS ("
+                               "  SELECT (SELECT si.position FROM grocery_shop_items si, tl "
+                               "          WHERE si.shop_id = tl.shop_id AND si.item_id = $2) AS p), "
+                               "candidates AS ("
+                               "  SELECT e.position "
+                               "  FROM grocery_list_entries e "
+                               "  JOIN grocery_items i ON i.id = e.item_id, tl, new_alpha, new_shop_pos "
+                               "  WHERE e.list_id = $1 AND e.item_id IS NOT NULL "
+                               "    AND ("
+                               "      (tl.shop_id IS NULL AND lower(i.name) > new_alpha.a) "
+                               "      OR "
+                               "      (tl.shop_id IS NOT NULL AND "
+                               "       (SELECT si.position FROM grocery_shop_items si "
+                               "        WHERE si.shop_id = tl.shop_id AND si.item_id = e.item_id) "
+                               "       > new_shop_pos.p))) "
+                               "SELECT COALESCE("
+                               "  (SELECT MIN(position) FROM candidates), "
+                               "  (SELECT COALESCE(MAX(position), 0) + 1 "
+                               "   FROM grocery_list_entries WHERE list_id = $1))::text")
+                             list-id item-id))
+                     (pos (string->number
+                            (vector-ref (car (pg-result-rows pres)) 0))))
+                (pg-query c
+                  (string-append
+                    "UPDATE grocery_list_entries SET position = position + 1 "
+                    "WHERE list_id = $1 AND position >= $2")
+                  list-id pos)
+                (pg-query c
+                  (string-append
+                    "INSERT INTO grocery_list_entries "
+                    "(list_id, item_id, qty, position) VALUES ($1, $2, 1, $3)")
+                  list-id item-id pos)))
+            (pg-exec c "COMMIT"))))))
+
+    ;; Ad-hoc entry: no catalog row, always appended at the end.
+    (define (add-adhoc! cfg list-id name)
       (exec cfg
         (string-append
-          "INSERT INTO grocery_list_entries (list_id, item_id, qty) "
-          "VALUES ($1, $2, 1) "
-          "ON CONFLICT (list_id, item_id) "
-          "DO UPDATE SET qty = grocery_list_entries.qty + 1, bought = false")
-        (list list-id item-id)))
+          "INSERT INTO grocery_list_entries (list_id, name, qty, position) "
+          "VALUES ($1, $2, 1, "
+          "  (SELECT COALESCE(MAX(position), 0) + 1 "
+          "   FROM grocery_list_entries WHERE list_id = $1))")
+        (list list-id name)))
+
+    ;; Replace positions of the listed entry-ids with 1..N. Entries on
+    ;; the list that aren't in the payload are left untouched.
+    (define (set-list-order! cfg list-id entry-ids)
+      (with-db cfg
+        (lambda (c)
+          (pg-exec c "BEGIN")
+          (guard (exn (#t
+                       (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
+                       (raise exn)))
+            (let loop ((ids entry-ids) (pos 1))
+              (cond
+                ((null? ids) #t)
+                (else
+                 (pg-exec c
+                   "UPDATE grocery_list_entries SET position = $1 WHERE list_id = $2 AND id = $3"
+                   pos list-id (car ids))
+                 (loop (cdr ids) (+ pos 1)))))
+            (pg-exec c "COMMIT")))))
 
     (define (dec-entry! cfg entry-id)
       ;; -1; if it reaches 0, delete the row.
@@ -363,7 +429,10 @@
              (bought (string=? (row-field e "bought") "yes"))
              (lid    (number->string list-id))
              (action-base (string-append "/grocery/lists/" lid "/entries/" eid)))
-        `(li (@ (class ,(if bought "bought" "open")))
+        `(li (@ (class ,(if bought "bought" "open"))
+                (data-entry-id ,eid))
+           (button (@ (type "button") (class "drag-handle")
+                      (aria-label "drag to reorder")) "⠿")
            (form (@ (method "post")
                     (action ,(string-append action-base "/toggle"))
                     (class "inline toggle"))
@@ -391,8 +460,19 @@
          (h2 "Shopping list")
          ,(if (null? entries)
               `(p (@ (class "empty")) "Empty. Tap items below to add.")
-              `(ul (@ (class "grocery-shopping"))
+              `(ul (@ (class "grocery-shopping")
+                      (data-list-id ,(number->string list-id)))
                    ,@(map (lambda (e) (entry-sxml list-id e)) entries)))))
+
+    (define (adhoc-form-sxml list-id)
+      (let ((lid (number->string list-id)))
+        `(form (@ (method "post")
+                  (action ,(string-append "/grocery/lists/" lid "/adhoc"))
+                  (class "grocery-new"))
+           (input (@ (type "text") (name "name") (required #t)
+                     (maxlength "100")
+                     (placeholder "ad-hoc item (one-off)")))
+           (button (@ (type "submit")) "Add"))))
 
     (define (catalog-item-sxml list-id entry-by-item i)
       (let* ((id   (row-field i "id"))
@@ -433,11 +513,14 @@
                   (shop-id (and (string? shop-id-str)
                                 (not (string=? shop-id-str ""))
                                 (string->number shop-id-str)))
-                  (entries (list-entries cfg list-id shop-id))
+                  (entries (list-entries cfg list-id))
                   (catalog (shop-items cfg shop-id))
                   (entry-by-item-id
-                    (map (lambda (e) (cons (row-field e "item_id") e))
-                         entries))
+                    (filter-map
+                      (lambda (e)
+                        (let ((iid (row-field e "item_id")))
+                          (and (not (string=? iid "")) (cons iid e))))
+                      entries))
                   (lid (number->string list-id))
                   (body
                     `((header (@ (class "feeds-head"))
@@ -457,6 +540,7 @@
                                  (data-confirm "Delete this list?"))
                           (button (@ (class "linkish danger")) "delete list")))
                       ,(entries-sxml list-id entries)
+                      ,(adhoc-form-sxml list-id)
                       ,(catalog-sxml list-id catalog entry-by-item-id))))
              (page-sxml req auth "Grocery" 'grocery body))))))
 
@@ -788,6 +872,30 @@
             (let ((lid (string->number (params-ref params "id")))
                   (eid (string->number (params-ref params "eid"))))
               (when eid (delete-entry! cfg eid))
+              (redirect (string-append "/grocery/lists/"
+                                       (number->string lid)))))))
+
+      (router-add! router "POST" "/grocery/lists/:id/reorder"
+        (require-auth auth
+          (lambda (req params)
+            (let* ((lid  (string->number (params-ref params "id")))
+                   (form (parse-www-form (or (http-request-body req) "")))
+                   (raw  (form-ref form "order" ""))
+                   (parts (filter
+                            (lambda (s) (not (string=? s "")))
+                            (map string-trim-both (string-split-comma raw))))
+                   (ids  (filter-map string->number parts)))
+              (when (and lid (pair? ids)) (set-list-order! cfg lid ids))
+              (make-http-response 204 '() "")))))
+
+      (router-add! router "POST" "/grocery/lists/:id/adhoc"
+        (require-auth auth
+          (lambda (req params)
+            (let* ((lid  (string->number (params-ref params "id")))
+                   (form (parse-www-form (or (http-request-body req) "")))
+                   (name (string-trim-both (form-ref form "name" ""))))
+              (when (and lid (not (string=? name "")))
+                (add-adhoc! cfg lid name))
               (redirect (string-append "/grocery/lists/"
                                        (number->string lid))))))))
 

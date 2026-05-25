@@ -285,67 +285,93 @@
     });
 })();
 
-// Grocery shop-order: drag-to-reorder using Pointer Events (works on
-// mouse and touch). The drag handle is the leading ⠿ button; tapping
-// elsewhere on the row is unaffected.
+// Grocery list page: preserve scroll position across the
+// submit-redirect-reload cycle so adding an item doesn't bounce the
+// viewport to the top. Scoped to the per-list shopping view.
 (function () {
-    var list = document.querySelector('ul.grocery-order[data-shop-id]');
-    if (!list) return;
-    var shopId = list.getAttribute('data-shop-id');
+    if (!document.querySelector('ul.grocery-shopping[data-list-id]')) return;
+    var key = 'grocery-scroll:' + location.pathname;
+    try {
+        var saved = sessionStorage.getItem(key);
+        if (saved !== null) {
+            sessionStorage.removeItem(key);
+            window.scrollTo(0, parseInt(saved, 10) || 0);
+        }
+    } catch (e) { /* private mode, ignore */ }
+    document.addEventListener('submit', function () {
+        try { sessionStorage.setItem(key, String(window.scrollY)); }
+        catch (e) { /* ignore */ }
+    }, true);
+})();
 
-    function currentOrder() {
-        var ids = [];
-        list.querySelectorAll('li').forEach(function (li) {
-            var id = li.getAttribute('data-item-id');
-            if (id) ids.push(id);
-        });
-        return ids;
-    }
+// Grocery drag-to-reorder using Pointer Events (mouse + touch). Used
+// by both the shop-order admin page and the per-list shopping view.
+// The drag handle is the leading ⠿ button; tapping elsewhere on the
+// row is unaffected.
+(function () {
+    function setup(list, idAttr, endpoint) {
+        function currentOrder() {
+            var ids = [];
+            list.querySelectorAll('li').forEach(function (li) {
+                var id = li.getAttribute(idAttr);
+                if (id) ids.push(id);
+            });
+            return ids;
+        }
+        function commit() {
+            fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                credentials: 'same-origin',
+                body: 'order=' + encodeURIComponent(currentOrder().join(','))
+            });
+        }
+        function bind(handle) {
+            handle.addEventListener('pointerdown', function (ev) {
+                var dragged = handle.closest('li');
+                if (!dragged) return;
+                dragged.classList.add('dragging');
+                ev.preventDefault();
 
-    function commit() {
-        fetch('/grocery/shops/' + shopId + '/reorder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            credentials: 'same-origin',
-            body: 'order=' + encodeURIComponent(currentOrder().join(','))
-        });
-    }
-
-    function bind(handle) {
-        handle.addEventListener('pointerdown', function (ev) {
-            var dragged = handle.closest('li');
-            if (!dragged) return;
-            dragged.classList.add('dragging');
-            ev.preventDefault();
-
-            function onMove(e2) {
-                var items = list.querySelectorAll('li:not(.dragging)');
-                var placed = false;
-                for (var i = 0; i < items.length; i++) {
-                    var sib = items[i];
-                    var r = sib.getBoundingClientRect();
-                    if (e2.clientY < r.top + r.height / 2) {
-                        list.insertBefore(dragged, sib);
-                        placed = true;
-                        break;
+                function onMove(e2) {
+                    var items = list.querySelectorAll('li:not(.dragging)');
+                    var placed = false;
+                    for (var i = 0; i < items.length; i++) {
+                        var sib = items[i];
+                        var r = sib.getBoundingClientRect();
+                        if (e2.clientY < r.top + r.height / 2) {
+                            list.insertBefore(dragged, sib);
+                            placed = true;
+                            break;
+                        }
                     }
+                    if (!placed) list.appendChild(dragged);
                 }
-                if (!placed) list.appendChild(dragged);
-            }
-            function onEnd() {
-                dragged.classList.remove('dragging');
-                document.removeEventListener('pointermove', onMove);
-                document.removeEventListener('pointerup', onEnd);
-                document.removeEventListener('pointercancel', onEnd);
-                commit();
-            }
-            document.addEventListener('pointermove', onMove);
-            document.addEventListener('pointerup', onEnd);
-            document.addEventListener('pointercancel', onEnd);
-        });
+                function onEnd() {
+                    dragged.classList.remove('dragging');
+                    document.removeEventListener('pointermove', onMove);
+                    document.removeEventListener('pointerup', onEnd);
+                    document.removeEventListener('pointercancel', onEnd);
+                    commit();
+                }
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onEnd);
+                document.addEventListener('pointercancel', onEnd);
+            });
+        }
+        list.querySelectorAll('.drag-handle').forEach(bind);
     }
 
-    list.querySelectorAll('.drag-handle').forEach(bind);
+    var shopList = document.querySelector('ul.grocery-order[data-shop-id]');
+    if (shopList) {
+        setup(shopList, 'data-item-id',
+              '/grocery/shops/' + shopList.getAttribute('data-shop-id') + '/reorder');
+    }
+    var listList = document.querySelector('ul.grocery-shopping[data-list-id]');
+    if (listList) {
+        setup(listList, 'data-entry-id',
+              '/grocery/lists/' + listList.getAttribute('data-list-id') + '/reorder');
+    }
 })();
 
 // ===========================================================

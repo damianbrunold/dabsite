@@ -1300,6 +1300,23 @@ ul.grocery-shopping li.bought .check {
     color: var(--accent-fg);
     border-color: var(--accent);
 }
+ul.grocery-shopping .drag-handle {
+    background: transparent;
+    border: none;
+    padding: 0 0.4rem;
+    color: var(--fg-muted);
+    cursor: grab;
+    touch-action: none;
+    font-size: 1.2rem;
+    line-height: 1;
+    align-self: center;
+}
+ul.grocery-shopping .drag-handle:active { cursor: grabbing; }
+ul.grocery-shopping li.dragging {
+    opacity: 0.6;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
 ul.grocery-shopping .rm button,
 ul.grocery-items    .rm button {
     color: var(--fg-muted);
