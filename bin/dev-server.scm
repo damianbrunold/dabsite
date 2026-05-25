@@ -82,6 +82,17 @@
   (process-wait proc))
 
 (define poll-interval 0.5)
+(define debounce-interval 0.3)
+
+;; After a change is first detected, wait until mtimes stop moving before
+;; restarting. Editors often write files in chunks; restarting mid-write
+;; makes the child die on a truncated read.
+(define (settle snap)
+  (thread-sleep! debounce-interval)
+  (let ((next (snapshot (watched-files))))
+    (if (changed? snap next)
+        (settle next)
+        next)))
 
 (define (relative-to-root path)
   (let ((prefix (string-append root "/"))
@@ -101,30 +112,32 @@
   (let loop ((proc (start-child))
              (snap (snapshot (watched-files))))
     (thread-sleep! poll-interval)
-    (cond
-      ((not (process-alive? proc))
-       (log "child exited; supervisor stopping")
-       (exit 0))
-      (else
-       (let* ((files (watched-files))
-              (new-snap (snapshot files)))
-         (cond
-           ((changed? snap new-snap)
-            (let ((changes (changed-paths snap new-snap)))
-              (log (string-append "change detected ("
-                                  (number->string (length changes))
-                                  "): "
-                                  (apply string-append
-                                         (let join ((xs (map relative-to-root changes)))
-                                           (cond
-                                             ((null? xs) '(""))
-                                             ((null? (cdr xs)) (list (car xs)))
-                                             (else (cons (car xs)
-                                                         (cons ", " (join (cdr xs))))))))))
-              (stop-child proc)
-              (log "restarting child")
-              (loop (start-child) (snapshot (watched-files)))))
-           (else
-            (loop proc snap))))))))
+    (let* ((files (watched-files))
+           (new-snap (snapshot files))
+           (alive (process-alive? proc)))
+      (cond
+        ((changed? snap new-snap)
+         (let* ((settled (settle new-snap))
+                (changes (changed-paths snap settled)))
+           (log (string-append "change detected ("
+                               (number->string (length changes))
+                               "): "
+                               (apply string-append
+                                      (let join ((xs (map relative-to-root changes)))
+                                        (cond
+                                          ((null? xs) '(""))
+                                          ((null? (cdr xs)) (list (car xs)))
+                                          (else (cons (car xs)
+                                                      (cons ", " (join (cdr xs))))))))))
+           (when alive
+             (stop-child proc))
+           (log (if alive "restarting child" "child not running; starting"))
+           (loop (start-child) settled)))
+        ((not alive)
+         (process-wait proc)
+         (log "child exited; waiting for file change to retry")
+         (loop proc snap))
+        (else
+         (loop proc snap))))))
 
 (run)
