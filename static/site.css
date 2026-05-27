@@ -1415,8 +1415,12 @@ nav.top { position: relative; }
     .nav-hamburger { display: inline-block; }
     nav.top ul.links {
         display: none;
-        position: absolute;
-        top: 100%; left: 0; right: 0;
+        /* Fixed (not absolute) so the dropdown is anchored to the
+         * viewport and visible regardless of how short the page
+         * content is — otherwise short pages (e.g. an empty grocery
+         * landing) can't scroll to reveal items past the fold. */
+        position: fixed;
+        top: 3rem; left: 0; right: 0;
         flex-direction: column;
         gap: 0;
         background: var(--bg-card);
@@ -1425,6 +1429,9 @@ nav.top { position: relative; }
         padding: 0.5rem 0.75rem;
         z-index: 30;
         flex: none;
+        max-height: calc(100vh - 3rem);
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
     .nav-toggle:checked ~ ul.links { display: flex; }
     nav.top ul.links li { width: 100%; }
