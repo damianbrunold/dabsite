@@ -1,10 +1,15 @@
-;; Unit tests for (dabsite markdown).
+;; Integration tests: dabsite renders Markdown via the (scm markdown)
+;; standard-library renderer. These assertions guard the behaviour dabsite
+;; relies on — escaping, safe link schemes, lists (incl. nesting).
 
 (import (scheme base) (scheme write) (scheme process-context)
-        (srfi 13) (scm module))
-(module-search-path! (cons "src" (module-search-path)))
+        (srfi 13))
 
-(import (dabsite markdown) (scm test) (srfi 64))
+(import (scm markdown) (scm test) (srfi 64))
+
+;; dabsite historically called this `render-markdown`; keep the alias so the
+;; assertions read against the stable name.
+(define render-markdown markdown->html)
 
 (test-runner-factory scm-test-runner)
 (test-begin "markdown")
@@ -41,7 +46,14 @@
     (test-assert "<ol>"   (contains? h "<ol>"))
     (test-assert "ol li one" (contains? h "<li>one</li>"))
     (test-assert "ol li two" (contains? h "<li>two</li>"))
-    (test-assert "no ul"  (not (contains? h "<ul>")))))
+    (test-assert "no ul"  (not (contains? h "<ul>"))))
+  ;; '*' and '+' bullet markers are accepted (not just '-')
+  (let ((h (render-markdown "* a\n+ b\n")))
+    (test-assert "star/plus bullets" (contains? h "<li>a</li>")))
+  ;; nested lists render a sub-<ul> inside the parent <li>
+  (let ((h (render-markdown "- a\n  - b\n  - c\n- d\n")))
+    (test-assert "nested ul" (contains? h "<li>a\n<ul>"))
+    (test-assert "nested item" (contains? h "<li>b</li>"))))
 
 (test-group "paragraphs"
   (let ((h (render-markdown "first line\nsecond line\n\nnext para\n")))

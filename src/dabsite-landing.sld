@@ -8,11 +8,11 @@
           (scm net http route)
           (scm net http forms)
           (scm html builder)
+          (scm markdown)
           (dabsite db)
           (dabsite util)
           (dabsite auth)
-          (dabsite views)
-          (dabsite markdown))
+          (dabsite views))
   (export install-landing-routes!)
   (begin
 
@@ -64,7 +64,7 @@
         (if p (cdr p) "")))
 
     (define (render-page-source format source)
-      (if (string=? format "html") source (render-markdown source)))
+      (if (string=? format "html") source (markdown->html source)))
 
     (define (save-page! cfg slug title format source)
       (let ((html (render-page-source format source)))

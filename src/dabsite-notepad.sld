@@ -12,10 +12,10 @@
           (scm net http forms)
           (scm html builder)
           (scm uri)
+          (scm markdown)
           (dabsite db)
           (dabsite util)
           (dabsite auth)
-          (dabsite markdown)
           (dabsite views))
   (export install-notepad-routes!)
   (begin
@@ -213,7 +213,7 @@
                       ((markdown-note? body-text)
                        ;; "page" class reuses landing-page typography.
                        `(article (@ (class "page"))
-                          ,(raw (render-markdown
+                          ,(raw (markdown->html
                                   (strip-markdown-marker body-text)))))
                       (else
                        `(pre (@ (class "note-body")) ,body-text))))
