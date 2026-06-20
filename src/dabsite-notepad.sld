@@ -117,25 +117,51 @@
                           name))))))
         (and (pair? rows) (car rows))))
 
+    (define (like-escape s)
+      ;; Escape ILIKE wildcards so a search term matches literally. The
+      ;; default LIKE escape character is backslash.
+      (string-fold
+        (lambda (c acc)
+          (string-append
+            acc
+            (if (or (char=? c #\\) (char=? c #\%) (char=? c #\_))
+                (string #\\ c)
+                (string c))))
+        ""
+        s))
+
     (define (list-notes cfg q)
+      ;; Split the query into whitespace-separated terms. A note matches
+      ;; when *every* term occurs (case-insensitively, as a substring) in
+      ;; its name or body. ILIKE keeps this to plain, portable SQL.
       (let* ((base (string-append "SELECT id, name, "
                                   "  substring(body, 1, 160) AS preview, "
                                   "  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
                                   "FROM notes "))
-             (has-q (and q (non-empty-trimmed? q)))
-             (where (if has-q
+             (terms (if (and q (non-empty-trimmed? q))
+                        (string-tokenize q)
+                        '()))
+             (params (map (lambda (t)
+                            (string-append "%" (like-escape t) "%"))
+                          terms))
+             (where (if (null? terms)
+                        ""
                         (string-append
-                          "WHERE to_tsvector('simple', name || ' ' || body) "
-                          "@@ plainto_tsquery('simple', $1) ")
-                        ""))
+                          "WHERE "
+                          (string-join
+                            (map (lambda (i)
+                                   (string-append
+                                     "(name || ' ' || body) ILIKE $"
+                                     (number->string i)))
+                                 (iota (length terms) 1))
+                            " AND ")
+                          " ")))
              (order "ORDER BY updated_at DESC LIMIT 200")
              (sql (string-append base where order)))
         (with-db cfg
           (lambda (c)
             (pg-result->alist-list
-              (if has-q
-                  (pg-query c sql q)
-                  (pg-query c sql)))))))
+              (apply pg-query c sql params))))))
 
     (define (create-note! cfg name body)
       (with-db cfg
