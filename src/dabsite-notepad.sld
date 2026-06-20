@@ -4,6 +4,7 @@
           (scheme char)
           (srfi 1)
           (srfi 13)
+          (srfi 14)
           (scm crypto)
           (scm database postgres)
           (scm net http request)
@@ -139,7 +140,7 @@
                                   "  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated "
                                   "FROM notes "))
              (terms (if (and q (non-empty-trimmed? q))
-                        (string-tokenize q)
+                        (string-tokenize q (char-set-complement char-set:whitespace))
                         '()))
              (params (map (lambda (t)
                             (string-append "%" (like-escape t) "%"))
