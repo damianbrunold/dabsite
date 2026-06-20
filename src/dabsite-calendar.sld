@@ -1670,9 +1670,10 @@
       (make-http-response 302 (list (cons "Location" to)) ""))
 
     (define (param-or req name default)
+      ;; url-query-params already percent-decodes values (route lib).
       (let ((p (assoc name (url-query-params (http-request-url req)))))
         (cond
-          ((and p (string? (cdr p))) (percent-decode (cdr p)))
+          ((and p (string? (cdr p))) (cdr p))
           (else default))))
 
     (define (form-or form name default)

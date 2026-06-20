@@ -14,7 +14,6 @@
           (scm net http route)
           (scm net http multipart)
           (scm html builder)
-          (scm uri)
           (scm log)
           (dabsite db)
           (dabsite util)
@@ -414,9 +413,10 @@
     ;; ---- request helpers ----
 
     (define (param-or req name default)
+      ;; url-query-params already percent-decodes values (route lib).
       (let ((p (assoc name (url-query-params (http-request-url req)))))
         (if (and p (string? (cdr p)))
-            (percent-decode (cdr p))
+            (cdr p)
             default)))
 
     (define (find-part parts name)
@@ -573,8 +573,9 @@
       ;; ----- public hosting: /f/<name> -----
       (router-add! router "GET" "/f/:name"
         (lambda (req params)
-          (let* ((raw  (params-ref params "name"))
-                 (name (and raw (percent-decode raw)))
+          ;; :name is percent-decoded by the router; safe-public-name guards
+          ;; against traversal / unexpected characters.
+          (let* ((name (params-ref params "name"))
                  (safe (and name (safe-public-name name))))
             (cond
               ((not safe) (render-error 404 "Not found."))

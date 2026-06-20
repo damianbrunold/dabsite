@@ -576,9 +576,10 @@
     ;; ============================================================
 
     (define (param-or req name default)
+      ;; url-query-params already percent-decodes values (route lib).
       (let ((p (assoc name (url-query-params (http-request-url req)))))
         (cond
-          ((and p (string? (cdr p))) (percent-decode (cdr p)))
+          ((and p (string? (cdr p))) (cdr p))
           (else default))))
 
     (define (params-all req name)
@@ -587,7 +588,7 @@
         (lambda (p)
           (cond
             ((and (string=? (car p) name) (string? (cdr p)))
-             (percent-decode (cdr p)))
+             (cdr p))
             (else #f)))
         (url-query-params (http-request-url req))))
 

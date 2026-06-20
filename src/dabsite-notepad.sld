@@ -319,7 +319,7 @@
             (let ((q (cdr (or (assoc "q" (url-query-params (http-request-url req)))
                               '("q" . #f)))))
               (render-list-view req auth cfg
-                (cond ((string? q) (percent-decode q)) (else #f)))))))
+                (cond ((string? q) q) (else #f)))))))
 
       (router-add! router "GET" "/notes/new"
         (require-auth auth

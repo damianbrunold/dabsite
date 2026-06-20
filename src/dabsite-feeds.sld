@@ -1426,10 +1426,11 @@
     ;; ==============================================================
 
     (define (param-or req params name default)
+      ;; url-query-params already percent-decodes values (route lib).
       (let* ((q (url-query-params (http-request-url req)))
              (p (assoc name q)))
         (cond
-          ((and p (string? (cdr p))) (percent-decode (cdr p)))
+          ((and p (string? (cdr p))) (cdr p))
           (else default))))
 
     (define (install-feed-routes! router cfg auth)
