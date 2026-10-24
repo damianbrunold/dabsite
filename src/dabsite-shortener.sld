@@ -209,7 +209,7 @@
       (router-add! router "POST" "/shortener"
         (require-auth auth
           (lambda (req params)
-            (let* ((form       (parse-www-form (or (http-request-body req) "")))
+            (let* ((form       (http-request-form req))
                    (raw        (string-trim-both (form-ref form "code" "")))
                    (target     (string-trim-both (form-ref form "target" "")))
                    (note       (string-trim-both (form-ref form "note" "")))

@@ -27,13 +27,14 @@
 ;; Generate with: scm bin/hash-passphrase.scm 'your passphrase here'
 ;; The result is a string of the form "pbkdf2$<iterations>$<salt-b64>$<hash-b64>".
 (define auth-passphrase-hash
-  "pbkdf2$200000$REPLACE_WITH_BASE64_SALT$REPLACE_WITH_BASE64_HASH")
+  "pbkdf2$600000$REPLACE_WITH_BASE64_SALT$REPLACE_WITH_BASE64_HASH")
 
 ;; Secret used to sign the auth cookie. 32+ random bytes, base64-encoded.
 ;; Generate with: scm bin/gen-secret.scm
 (define cookie-secret "REPLACE_WITH_BASE64_SECRET")
 
-;; Cookie name and max-age (seconds). 10 years by default.
+;; Cookie name and session lifetime (seconds), enforced by the signed
+;; cookie itself, not just the browser. 10 years by default.
 (define cookie-name    "damian_auth")
 (define cookie-max-age (* 60 60 24 365 10))
 

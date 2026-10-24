@@ -1,28 +1,26 @@
 (define-library (dabsite auth)
   (import (scheme base)
-          (scheme write)
-          (scheme time)
-          (scheme char)
-          (scheme cxr)
-          (srfi 13)
           (srfi 18)
           (scm crypto)
+          (scm crypto password)
           (scm net http request)
           (scm net http response)
           (scm net http route)
           (scm net http forms)
-          (scm net http cookies)
+          (scm net http session)
+          (scm net http static)
           (scm html builder))
   (export make-auth
           auth?
           authed?
           verify-passphrase
-          sign-token
-          verify-token
+          login-cookie
           install-auth-routes!
           require-auth
           site-lang
-          set-site-lang!)
+          set-site-lang!
+          set-static-dir!
+          static-url)
   (begin
 
     ;; Site-wide default for <html lang="…">. server.scm sets this from
@@ -32,118 +30,62 @@
     (define (site-lang) %site-lang)
     (define (set-site-lang! lang) (set! %site-lang lang))
 
-    ;; auth holds everything needed to verify credentials and cookies. The
-    ;; passphrase hash is parsed once into (iter . (salt-bv . hash-bv)).
+    ;; Asset URLs with a ?v=<mtime> cache-buster, so the static handler
+    ;; can let browsers cache them for good. build-router sets the
+    ;; directory; until then (tests) URLs carry no version.
+    (define %static-url (lambda (rel) (string-append "/static/" rel)))
+    (define (set-static-dir! dir)
+      (set! %static-url (make-static-url dir "/static")))
+    (define (static-url rel) (%static-url rel))
+
+    ;; auth holds the session cookie config and the passphrase hash.
     (define-record-type auth
-      (make-auth-record cookie-name cookie-secret cookie-max-age
-                        pbkdf2-iter pbkdf2-salt pbkdf2-hash)
+      (make-auth-record session passphrase-hash)
       auth?
-      (cookie-name    auth-cookie-name)
-      (cookie-secret  auth-cookie-secret)
-      (cookie-max-age auth-cookie-max-age)
-      (pbkdf2-iter    auth-pbkdf2-iter)
-      (pbkdf2-salt    auth-pbkdf2-salt)
-      (pbkdf2-hash    auth-pbkdf2-hash))
+      (session         auth-session)
+      (passphrase-hash auth-passphrase-hash))
 
-    ;; --- helpers ---
-
-    (define (split-on-dollar s)
-      (let* ((n (string-length s))
-             (acc '()))
-        (let loop ((i 0) (start 0))
-          (cond
-            ((= i n) (reverse (cons (substring s start n) acc)))
-            ((char=? (string-ref s i) #\$)
-             (set! acc (cons (substring s start i) acc))
-             (loop (+ i 1) (+ i 1)))
-            (else (loop (+ i 1) start))))))
-
-    (define (parse-pbkdf2-hash s)
-      ;; Format: pbkdf2$<iter>$<salt-b64>$<hash-b64>
-      ;; Returns three values via a 3-list: (iter salt-bv hash-bv).
-      (let ((parts (split-on-dollar s)))
-        (unless (= 4 (length parts))
-          (error "auth: malformed pbkdf2 hash"))
-        (unless (string=? (car parts) "pbkdf2")
-          (error "auth: not a pbkdf2 hash"))
-        (let ((iter (string->number (cadr parts)))
-              (salt (base64-decode (caddr parts)))
-              (hash (base64-decode (cadddr parts))))
-          (unless iter (error "auth: bad iteration count"))
-          (list iter salt hash))))
-
+    ;; cookie-secret: base64, or a list of them (newest first) while
+    ;; rotating keys; a short or malformed one raises here, at startup.
     (define (make-auth cookie-name cookie-secret cookie-max-age
-                       passphrase-hash)
-      (let ((parsed (parse-pbkdf2-hash passphrase-hash)))
-        (make-auth-record cookie-name
-                          (base64-decode cookie-secret)
-                          cookie-max-age
-                          (car parsed)
-                          (cadr parsed)
-                          (caddr parsed))))
+                       passphrase-hash secure-cookies?)
+      (make-auth-record
+        (make-session-config cookie-name cookie-secret cookie-max-age
+                             `((secure? . ,secure-cookies?)))
+        passphrase-hash))
 
     ;; --- passphrase ---
+    ;;
+    ;; (scm crypto password): "pbkdf2$<iter>$<salt-b64>$<hash-b64>".
 
     (define (verify-passphrase auth pw)
-      (let ((computed (pbkdf2-sha256 (string->utf8 pw)
-                                     (auth-pbkdf2-salt auth)
-                                     (auth-pbkdf2-iter auth)
-                                     (bytevector-length (auth-pbkdf2-hash auth)))))
-        (constant-time-bytevector=? computed (auth-pbkdf2-hash auth))))
+      (password-verify pw (auth-passphrase-hash auth)))
 
-    ;; --- cookie tokens ---
+    ;; --- session cookie ---
     ;;
-    ;; A token is "<base64(payload)>.<hex(hmac-sha256 secret payload-bytes)>".
-    ;; The payload is "v1|<issued-at>". We don't enforce expiry here — the
-    ;; browser drops the cookie when max-age passes — but having issued-at
-    ;; in the payload makes it possible to invalidate by rotating the
-    ;; cookie-secret without changing format.
+    ;; The signed cookie (scm net http session) carries a stamp of the
+    ;; passphrase hash: putting a new hash into config.scm ends every
+    ;; existing session. Its lifetime is enforced by the token itself,
+    ;; not only by the browser.
 
-    (define (payload-now)
-      (string-append "v1|" (number->string (exact (round (current-second))))))
+    (define (passphrase-stamp auth)
+      (base64-encode
+        (bytevector-copy
+          (sha256-hash (string->utf8 (auth-passphrase-hash auth))) 0 12)))
 
-    (define (sign-bytes secret bv)
-      (hmac-sha256 secret bv))
-
-    (define (sign-token auth)
-      (let* ((payload  (payload-now))
-             (pl-bytes (string->utf8 payload))
-             (b64      (base64-encode pl-bytes))
-             (mac      (sign-bytes (auth-cookie-secret auth) pl-bytes)))
-        (string-append b64 "." (bytevector->hex mac))))
-
-    (define (verify-token auth token)
-      (and (string? token)
-           (not (string=? token ""))
-           (let ((dot (string-index token #\.)))
-             (and dot
-                  (guard (exn (#t #f))
-                    (let* ((b64  (substring token 0 dot))
-                           (mac  (substring token (+ dot 1)
-                                            (string-length token)))
-                           (pl   (base64-decode b64))
-                           (calc (sign-bytes (auth-cookie-secret auth) pl))
-                           (got  (hex->bytevector mac)))
-                      (constant-time-bytevector=? calc got)))))))
-
-    ;; --- request inspection ---
-
-    (define (request-cookies req)
-      (parse-cookie-header (http-request-header req "Cookie")))
+    (define (login-cookie auth)
+      (session-set-cookie (auth-session auth)
+                          `((pw . ,(passphrase-stamp auth)))))
 
     (define (authed? auth req)
-      (let* ((cookies (request-cookies req))
-             (token   (cookie-ref cookies (auth-cookie-name auth))))
-        (verify-token auth token)))
+      (let* ((s  (session-ref (auth-session auth) req))
+             (pw (and (pair? s) (assq 'pw s))))
+        (and pw (equal? (cdr pw) (passphrase-stamp auth)))))
 
     ;; --- responses ---
 
-    (define (redirect to . set-cookie)
-      (let ((headers (cons (cons "Location" to)
-                           (if (pair? set-cookie)
-                               (list (cons "Set-Cookie" (car set-cookie)))
-                               '()))))
-        (make-http-response 302 headers "")))
+    (define (redirect to . headers)
+      (make-http-response 302 (cons (cons "Location" to) headers) ""))
 
     (define (login-page-html error?)
       (html->string
@@ -151,7 +93,7 @@
           `(@ (lang ,(site-lang)))
           `(head (meta (@ (charset "utf-8")))
                  (title "Login")
-                 (link (@ (rel "stylesheet") (href "/static/site.css"))))
+                 (link (@ (rel "stylesheet") (href ,(static-url "site.css")))))
           `(body (main (@ (class "login"))
                        (h1 "Login")
                        ,@(if error?
@@ -171,7 +113,7 @@
 
     ;; --- routes ---
 
-    (define (install-auth-routes! router auth secure-cookies?)
+    (define (install-auth-routes! router auth)
       (router-add! router "GET" "/login"
         (lambda (req params)
           (if (authed? auth req)
@@ -180,40 +122,20 @@
 
       (router-add! router "POST" "/login"
         (lambda (req params)
-          (let* ((form (parse-www-form (or (http-request-body req) "")))
-                 (pw   (form-ref form "passphrase" "")))
+          (let ((pw (form-ref (http-request-form req) "passphrase" "")))
             (cond
               ((verify-passphrase auth pw)
-               (let* ((token (sign-token auth))
-                      (sc    (if secure-cookies?
-                                 (format-set-cookie (auth-cookie-name auth)
-                                                    token
-                                                    (auth-cookie-max-age auth)
-                                                    "/"
-                                                    'secure)
-                                 (format-set-cookie (auth-cookie-name auth)
-                                                    token
-                                                    (auth-cookie-max-age auth)
-                                                    "/"
-                                                    'no-secure))))
-                 (redirect "/" sc)))
+               (redirect "/" (login-cookie auth)))
               (else
                ;; Constant-ish delay on failure caps the rate at ~2
                ;; attempts/sec/connection, taking online brute-force
-               ;; from "feasible" to "needs a botnet". PBKDF2 already
-               ;; runs ~hundreds of ms, but a wrong-format password
-               ;; could short-circuit it.
+               ;; from "feasible" to "needs a botnet".
                (thread-sleep! 0.5)
                (html-ok (login-page-html #t)))))))
 
       (router-add! router "POST" "/logout"
         (lambda (req params)
-          (let ((clear (if secure-cookies?
-                           (format-set-cookie (auth-cookie-name auth) ""
-                                              0 "/" 'secure)
-                           (format-set-cookie (auth-cookie-name auth) ""
-                                              0 "/" 'no-secure))))
-            (redirect "/" clear)))))
+          (redirect "/" (session-clear-cookie (auth-session auth))))))
 
     ;; --- middleware ---
 

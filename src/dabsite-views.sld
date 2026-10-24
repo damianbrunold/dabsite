@@ -143,13 +143,13 @@
                (meta (@ (name "viewport")
                         (content "width=device-width, initial-scale=1")))
                (title ,title)
-               (link (@ (rel "icon") (type "image/png") (href "/static/icon.png")))
+               (link (@ (rel "icon") (type "image/png") (href ,(static-url "icon.png"))))
                ;; theme.js runs synchronously so the chosen theme is
                ;; applied before first paint. Both scripts are same-
                ;; origin so the strict CSP (script-src 'self') is happy.
-               (script (@ (src "/static/theme.js")))
-               (link (@ (rel "stylesheet") (href "/static/site.css")))
-               (script (@ (src "/static/site.js") (defer #t))))
+               (script (@ (src ,(static-url "theme.js"))))
+               (link (@ (rel "stylesheet") (href ,(static-url "site.css"))))
+               (script (@ (src ,(static-url "site.js")) (defer #t))))
             `(body (@ (class ,body-class))
               ,(nav-sxml req auth active)
               (main ,body-node))))
@@ -167,7 +167,7 @@
           (html5
             `(head (meta (@ (charset "utf-8")))
                    (title "Error")
-                   (link (@ (rel "stylesheet") (href "/static/site.css"))))
+                   (link (@ (rel "stylesheet") (href ,(static-url "site.css")))))
             `(body (main (h1 ,(number->string status))
                          (p ,msg)))))))
 

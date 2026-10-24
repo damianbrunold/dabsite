@@ -763,3 +763,15 @@
         if (a) { ev.preventDefault(); go(a.getAttribute('href')); }
     });
 })();
+
+// Calendar colours are user data, so the pages carry them as data-bg /
+// data-border-left attributes: the CSP (style-src 'self') blocks style=""
+// attributes, but not styles set from a same-origin script.
+(function () {
+    document.querySelectorAll('[data-bg]').forEach(function (el) {
+        el.style.background = el.getAttribute('data-bg');
+    });
+    document.querySelectorAll('[data-border-left]').forEach(function (el) {
+        el.style.borderLeftColor = el.getAttribute('data-border-left');
+    });
+})();

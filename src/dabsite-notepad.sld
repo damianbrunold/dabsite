@@ -305,7 +305,7 @@
                        (html->string page-body)))))
 
     (define (handle-create req params cfg auth)
-      (let* ((form  (parse-www-form (or (http-request-body req) "")))
+      (let* ((form  (http-request-form req))
              (raw   (string-trim-both (form-ref form "name" "")))
              (body  (form-ref form "body" ""))
              (name  (if (string=? raw "") (allocate-name cfg) raw)))
@@ -323,7 +323,7 @@
 
     (define (handle-edit req params cfg auth)
       (let* ((name (params-ref params "name"))
-             (form (parse-www-form (or (http-request-body req) "")))
+             (form (http-request-form req))
              (body (form-ref form "body" "")))
         (cond
           ((not (note-exists? cfg name)) (render-error 404 "Note not found."))

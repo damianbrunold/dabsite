@@ -5,24 +5,34 @@
 
 (import (dabsite auth)
         (scm crypto)
+        (scm crypto password)
         (scm net http request)
         (scm test)
+        (srfi 13)
         (srfi 64))
 
 (test-runner-factory scm-test-runner)
 
 ;; --- helpers ---
 
-(define (make-test-auth pw)
-  (let* ((salt (string->utf8 "saltsaltsaltsalt"))
-         (iter 1000)
-         (hash (pbkdf2-sha256 (string->utf8 pw) salt iter 32))
-         (hash-str (string-append "pbkdf2$"
-                                  (number->string iter) "$"
-                                  (base64-encode salt) "$"
-                                  (base64-encode hash)))
-         (secret  (base64-encode (string->utf8 "thirty-two-byte-secret-for-test!"))))
-    (make-auth "damian_auth" secret 3600 hash-str)))
+(define secret (base64-encode (string->utf8 "thirty-two-byte-secret-for-test!")))
+
+(define (test-hash pw)
+  (parameterize ((password-pbkdf2-iterations 1000))
+    (password-hash pw)))
+
+(define (make-test-auth pw . maybe-secret)
+  (make-auth "damian_auth"
+             (if (pair? maybe-secret) (car maybe-secret) secret)
+             3600 (test-hash pw) #f))
+
+;; "damian_auth=<token>; Path=/; ..." -> a request carrying that cookie
+(define (request-with set-cookie)
+  (let ((v (cdr set-cookie)))
+    (cookie-request (substring v 0 (string-index v #\;)))))
+
+(define (cookie-request value)
+  (make-http-request "GET" "/notes" (list (cons "Cookie" value)) #f))
 
 (test-begin "auth")
 
@@ -34,44 +44,31 @@
     (test-assert "trailing space rejected"
                  (not (verify-passphrase a "secret ")))))
 
-(test-group "token signing and verification"
-  (let* ((a (make-test-auth "secret"))
-         (t (sign-token a)))
-    (test-assert "verifies own token" (verify-token a t))
-    (test-assert "tampered MAC rejected"
-                 (not (verify-token a (string-append t "x"))))
-    (test-assert "empty rejected" (not (verify-token a "")))
-    (test-assert "garbage rejected" (not (verify-token a "abc.def")))
-    (test-assert "no dot rejected" (not (verify-token a "nodot")))
-    ;; Token created by a different secret must not verify.
-    (let ((other (make-auth "damian_auth"
-                            (base64-encode (string->utf8 "OTHER-thirty-two-byte-secret!!!!"))
-                            3600
-                            (string-append
-                              "pbkdf2$1000$"
-                              (base64-encode (string->utf8 "saltsaltsaltsalt")) "$"
-                              (base64-encode (pbkdf2-sha256 (string->utf8 "x")
-                                                            (string->utf8 "saltsaltsaltsalt")
-                                                            1000 32))))))
-      (test-assert "wrong secret rejected" (not (verify-token other t))))))
-
-(test-group "authed? via request cookies"
-  (let* ((a (make-test-auth "secret"))
-         (t (sign-token a))
-         (good (make-http-request "GET" "/notes"
-                  (list (cons "Cookie" (string-append "damian_auth=" t)))
-                  #f))
-         (no-cookie (make-http-request "GET" "/notes" '() #f))
-         (bad       (make-http-request "GET" "/notes"
-                  (list (cons "Cookie" "damian_auth=garbage.deadbeef"))
-                  #f))
-         (other-cookie (make-http-request "GET" "/notes"
-                  (list (cons "Cookie" "session=irrelevant"))
-                  #f)))
-    (test-assert "good cookie"     (authed? a good))
-    (test-assert "no cookie"   (not (authed? a no-cookie)))
-    (test-assert "bad mac"     (not (authed? a bad)))
-    (test-assert "wrong name"  (not (authed? a other-cookie)))))
+(test-group "session cookie"
+  (let* ((a    (make-test-auth "secret"))
+         (sc   (login-cookie a))
+         (good (request-with sc)))
+    (test-equal "Set-Cookie header" "Set-Cookie" (car sc))
+    (test-assert "HttpOnly" (string-contains (cdr sc) "HttpOnly"))
+    (test-assert "good cookie" (authed? a good))
+    (test-assert "no cookie"
+                 (not (authed? a (make-http-request "GET" "/notes" '() #f))))
+    (test-assert "garbage cookie"
+                 (not (authed? a (cookie-request "damian_auth=garbage.deadbeef"))))
+    (test-assert "tampered token"
+                 (not (authed? a (cookie-request
+                                   (string-append
+                                     (substring (cdr sc) 0 (string-index (cdr sc) #\;))
+                                     "x")))))
+    (test-assert "wrong cookie name"
+                 (not (authed? a (cookie-request "session=irrelevant"))))
+    (test-assert "wrong secret rejected"
+                 (not (authed? (make-test-auth "secret"
+                                 (base64-encode (string->utf8 "OTHER-thirty-two-byte-secret!!!!")))
+                               good)))
+    ;; A new passphrase hash in config.scm ends the existing sessions.
+    (test-assert "old session after passphrase change"
+                 (not (authed? (make-test-auth "new") good)))))
 
 (test-end "auth")
 

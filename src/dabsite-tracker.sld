@@ -286,28 +286,26 @@
       ;; completed-str: "YYYY-MM-DDTHH:MM" or "" for now().
       (with-db cfg
         (lambda (c)
-          (pg-exec c "BEGIN")
-          (guard (exn (#t (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
-                          (raise exn)))
-            (let* ((use-now? (or (not completed-str) (string=? completed-str "")))
-                   (res (if use-now?
-                            (pg-query c
-                              "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, now()) RETURNING id"
-                              text minutes)
-                            (pg-query c
-                              "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, $3::timestamptz) RETURNING id"
-                              text minutes completed-str)))
-                   (did (string->number (vector-ref (car (pg-result-rows res)) 0))))
-              ;; Topics — ensure each exists, then link.
-              (for-each
-                (lambda (name)
-                  (let ((tid (ensure-topic-c! c name)))
-                    (pg-exec c
-                      "INSERT INTO tracker_done_topics (done_id, topic_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
-                      did tid)))
-                topic-names)
-              (pg-exec c "COMMIT")
-              did)))))
+          (with-pg-transaction c
+            (lambda (c)
+              (let* ((use-now? (or (not completed-str) (string=? completed-str "")))
+                     (res (if use-now?
+                              (pg-query c
+                                "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, now()) RETURNING id"
+                                text minutes)
+                              (pg-query c
+                                "INSERT INTO tracker_done (text, minutes, completed) VALUES ($1, $2, $3::timestamptz) RETURNING id"
+                                text minutes completed-str)))
+                     (did (string->number (vector-ref (car (pg-result-rows res)) 0))))
+                ;; Topics — ensure each exists, then link.
+                (for-each
+                  (lambda (name)
+                    (let ((tid (ensure-topic-c! c name)))
+                      (pg-exec c
+                        "INSERT INTO tracker_done_topics (done_id, topic_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                        did tid)))
+                  topic-names)
+                did))))))
 
     (define (ensure-topic-c! c name)
       ;; In-transaction variant of ensure-topic!.
@@ -618,7 +616,7 @@
       (router-add! router "POST" "/tracker"
         (require-auth auth
           (lambda (req params)
-            (let* ((form      (parse-www-form (or (http-request-body req) "")))
+            (let* ((form      (http-request-form req))
                    (text      (string-trim-both (form-ref form "text" "")))
                    (mins-raw  (form-ref form "minutes" ""))
                    (mins      (parse-minutes mins-raw))
@@ -714,7 +712,7 @@
       (router-add! router "POST" "/tracker/topics"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (name (string-trim-both (form-ref form "name" ""))))
               (cond
                 ((string=? name "")

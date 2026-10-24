@@ -211,7 +211,7 @@
 
     (define (handle-edit-save req params cfg auth)
       (let* ((slug (params-ref params "slug"))
-             (form (parse-www-form (or (http-request-body req) "")))
+             (form (http-request-form req))
              (title  (form-ref form "title" ""))
              (format (form-ref form "format" "markdown"))
              (source (form-ref form "source" "")))
@@ -266,7 +266,7 @@
       (router-add! router "POST" "/pages"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (slug (string-trim-both (form-ref form "slug" ""))))
               (cond
                 ((not (valid-slug? slug))

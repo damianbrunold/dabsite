@@ -184,38 +184,36 @@
       ;; datetime-local input) or "" / #f to leave the column NULL.
       (with-db cfg
         (lambda (c)
-          (pg-exec c "BEGIN")
-          (guard (exn (#t (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
-                          (raise exn)))
-            (let* ((closes-val (non-empty-or-false closes-at))
-                   (res (cond
-                          (closes-val
-                           (pg-query c
-                             (string-append
-                               "INSERT INTO polls (slug, title, description, closes_at) "
-                               "VALUES ($1, $2, $3, $4::timestamptz) RETURNING id")
-                             slug title description closes-val))
-                          (else
-                           (pg-query c
-                             (string-append
-                               "INSERT INTO polls (slug, title, description, closes_at) "
-                               "VALUES ($1, $2, $3, NULL) RETURNING id")
-                             slug title description))))
-                   (rows (pg-result-rows res))
-                   (id   (if (pair? rows)
-                             (vector-ref (car rows) 0)
-                             (error "create-poll!: no id returned")))
-                   (poll-id (string->number id)))
-              (let loop ((i 0) (ls option-labels))
-                (cond
-                  ((null? ls) #t)
-                  (else
-                   (pg-exec c
-                     "INSERT INTO poll_options (poll_id, sort_order, label) VALUES ($1, $2, $3)"
-                     poll-id i (car ls))
-                   (loop (+ i 1) (cdr ls)))))
-              (pg-exec c "COMMIT")
-              poll-id)))))
+          (with-pg-transaction c
+            (lambda (c)
+              (let* ((closes-val (non-empty-or-false closes-at))
+                     (res (cond
+                            (closes-val
+                             (pg-query c
+                               (string-append
+                                 "INSERT INTO polls (slug, title, description, closes_at) "
+                                 "VALUES ($1, $2, $3, $4::timestamptz) RETURNING id")
+                               slug title description closes-val))
+                            (else
+                             (pg-query c
+                               (string-append
+                                 "INSERT INTO polls (slug, title, description, closes_at) "
+                                 "VALUES ($1, $2, $3, NULL) RETURNING id")
+                               slug title description))))
+                     (rows (pg-result-rows res))
+                     (id   (if (pair? rows)
+                               (vector-ref (car rows) 0)
+                               (error "create-poll!: no id returned")))
+                     (poll-id (string->number id)))
+                (let loop ((i 0) (ls option-labels))
+                  (cond
+                    ((null? ls) #t)
+                    (else
+                     (pg-exec c
+                       "INSERT INTO poll_options (poll_id, sort_order, label) VALUES ($1, $2, $3)"
+                       poll-id i (car ls))
+                     (loop (+ i 1) (cdr ls)))))
+                poll-id))))))
 
     (define (delete-poll! cfg slug)
       (exec cfg "DELETE FROM polls WHERE slug = $1" (list slug)))
@@ -281,19 +279,17 @@
       ;; row of choices can't be left behind on a crash.
       (with-db cfg
         (lambda (c)
-          (pg-exec c "BEGIN")
-          (guard (exn (#t (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
-                          (raise exn)))
-            (let* ((existing (find-existing-response-id c poll-id owner-cookie))
-                   (resp-id  (cond
-                               (existing
-                                (update-response-name! c existing name)
-                                existing)
-                               (else
-                                (insert-response! c poll-id name owner-cookie)))))
-              (insert-choices! c resp-id choices)
-              (pg-exec c "COMMIT")
-              resp-id)))))
+          (with-pg-transaction c
+            (lambda (c)
+              (let* ((existing (find-existing-response-id c poll-id owner-cookie))
+                     (resp-id  (cond
+                                 (existing
+                                  (update-response-name! c existing name)
+                                  existing)
+                                 (else
+                                  (insert-response! c poll-id name owner-cookie)))))
+                (insert-choices! c resp-id choices)
+                resp-id))))))
 
     ;; ============================================================
     ;; Views
@@ -600,7 +596,7 @@
       (router-add! router "POST" "/polls"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (title (string-trim-both (form-ref form "title" "")))
                    (desc  (string-trim-both (form-ref form "description" "")))
                    (raw-slug (string-trim-both (form-ref form "slug" "")))
@@ -683,7 +679,7 @@
                (render-error 403 "This poll is closed."))
               (else
                (let* ((poll-id (string->number (row-field poll "id")))
-                      (form    (parse-www-form (or (http-request-body req) "")))
+                      (form    (http-request-form req))
                       (name    (string-trim-both (form-ref form "name" "")))
                       (radios  (form-refs-by-prefix form "option_"))
                       (existing-cookie (request-owner-cookie req))

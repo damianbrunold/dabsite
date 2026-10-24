@@ -31,26 +31,25 @@
       '(("User-Agent" . "dabsite/1.0 (+https://www.damianbrunold.ch)")
         ("Accept"     . "application/atom+xml, application/rss+xml, application/xml;q=0.9, */*;q=0.8")))
 
+    ;; A hanging site must not stall the feed scheduler.
+    (define fetch-timeout-seconds 30)
+
     (define (fetch-feed url)
       (guard (exn (#t (err (string-append "fetch error: "
                                           (cond ((string? exn) exn)
+                                                ((error-object? exn)
+                                                 (error-object-message exn))
                                                 (else "exception"))))))
-        (let ((resp (http-get url ua-header)))
+        ;; The body stays bytes so the XML parser can honour the encoding
+        ;; the feed declares (a text decode assumed UTF-8).
+        (let ((resp (http-get-bytevector url ua-header fetch-timeout-seconds)))
           (cond
             ((not (= 200 (http-response-status resp)))
              (err (string-append "HTTP "
                                  (number->string (http-response-status resp)))))
             (else
-             (let* ((body  (http-response-body resp))
-                    ;; (scm feed) accepts either; pass through whatever the
-                    ;; client gave us. The XML parser honours the declared
-                    ;; encoding for bytevector input.
-                    (parsed
-                      (guard (parse-exn (#t #f))
-                        (cond
-                          ((bytevector? body) (parse-feed-bytevector body))
-                          ((string? body)     (parse-feed-string body))
-                          (else               #f)))))
+             (let ((parsed (guard (parse-exn (#t #f))
+                             (parse-feed-bytevector (http-response-body resp)))))
                (cond
                  ((not parsed) (err "parse error"))
                  (else (ok (car parsed) (cdr parsed))))))))))

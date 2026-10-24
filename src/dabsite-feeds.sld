@@ -725,6 +725,8 @@
 
     ;; --- link health probe (called from the scheduler) ---------------
 
+    (define link-probe-timeout-seconds 20)
+
     (define link-probe-ua
       '(("User-Agent" . "dabsite/1.0 (+https://www.damianbrunold.ch)")
         ("Accept"     . "*/*")))
@@ -737,7 +739,8 @@
       (define (ok-status? s) (and s (>= s 200) (< s 400)))
       (define (try method)
         (guard (exn (#t #f))
-          (let* ((req (make-http-request method url link-probe-ua #f))
+          (let* ((req (make-http-request method url link-probe-ua #f
+                                         link-probe-timeout-seconds))
                  (resp (http-send req)))
             (http-response-status resp))))
       (let ((head-status (try "HEAD")))
@@ -1489,7 +1492,7 @@
       (router-add! router "POST" "/feeds/mark-all-read"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (cat  (form-ref form "cat" "")))
               (mark-all-read! cfg (non-empty-or-false cat))
               ;; Always redirect to the unfiltered view: the category the
@@ -1501,7 +1504,7 @@
       (router-add! router "POST" "/feeds/mark-older"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (cat  (form-ref form "cat" ""))
                    (days (or (string->number (form-ref form "days" "2")) 2)))
               (when (and (integer? days) (> days 0))
@@ -1540,7 +1543,7 @@
         (require-auth auth
           (lambda (req params)
             (let ((id   (string->number (params-ref params "id")))
-                  (form (parse-www-form (or (http-request-body req) ""))))
+                  (form (http-request-form req)))
               (when id (pin-entry! cfg id))
               (make-http-response 302
                 (list (cons "Location" (safe-return form "/feeds")))
@@ -1550,7 +1553,7 @@
         (require-auth auth
           (lambda (req params)
             (let ((id   (string->number (params-ref params "id")))
-                  (form (parse-www-form (or (http-request-body req) ""))))
+                  (form (http-request-form req)))
               (when id (unpin-entry! cfg id))
               (make-http-response 302
                 (list (cons "Location" (safe-return form "/feeds/pinned")))
@@ -1559,7 +1562,7 @@
       (router-add! router "POST" "/feeds/pinned/add"
         (require-auth auth
           (lambda (req params)
-            (let* ((form    (parse-www-form (or (http-request-body req) "")))
+            (let* ((form    (http-request-form req))
                    (link    (string-trim-both (form-ref form "link" "")))
                    (title   (string-trim-both (form-ref form "title" "")))
                    (cat     (string-trim-both (form-ref form "category" "misc")))
@@ -1585,7 +1588,7 @@
       (router-add! router "POST" "/feeds/pinned/remove-current"
         (require-auth auth
           (lambda (req params)
-            (let* ((form  (parse-www-form (or (http-request-body req) "")))
+            (let* ((form  (http-request-form req))
                    (q     (form-ref form "q"     ""))
                    (cat   (form-ref form "cat"   ""))
                    (feed  (form-ref form "feed"  ""))
@@ -1610,7 +1613,7 @@
       (router-add! router "POST" "/feeds/admin"
         (require-auth auth
           (lambda (req params)
-            (let* ((form    (parse-www-form (or (http-request-body req) "")))
+            (let* ((form    (http-request-form req))
                    (url     (string-trim-both (form-ref form "url" "")))
                    (title   (string-trim-both (form-ref form "title" "")))
                    (label   (string-trim-both (form-ref form "label" "")))
@@ -1637,7 +1640,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((id      (string->number (params-ref params "id")))
-                   (form    (parse-www-form (or (http-request-body req) "")))
+                   (form    (http-request-form req))
                    (raw     (form-ref form "refresh" ""))
                    (refresh (parse-duration raw)))
               (cond
@@ -1651,7 +1654,7 @@
       (router-add! router "POST" "/feeds/admin/category-order"
         (require-auth auth
           (lambda (req params)
-            (let* ((form  (parse-www-form (or (http-request-body req) "")))
+            (let* ((form  (http-request-form req))
                    (name  (string-trim-both (form-ref form "name" "")))
                    (order (string->number (form-ref form "sort_order" "100"))))
               (cond
@@ -1666,7 +1669,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((id   (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (n    (string->number (form-ref form "min_entries" "0"))))
               (cond
                 ((and id n (integer? n) (>= n 0))
@@ -1679,7 +1682,7 @@
       (router-add! router "POST" "/feeds/admin/skip-pattern"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (pat  (string-trim-both (form-ref form "pattern" "")))
                    (kind (form-ref form "kind" "prefix")))
               (cond

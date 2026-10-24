@@ -683,7 +683,7 @@
       (router-add! router "POST" "/events"
         (require-auth auth
           (lambda (req params)
-            (let* ((form  (parse-www-form (or (http-request-body req) "")))
+            (let* ((form  (http-request-form req))
                    (kind  (string-trim-both (form-ref form "kind" "")))
                    (when-s (string-trim-both (form-ref form "recorded" "")))
                    (v1-raw (string-trim-both (form-ref form "v1" "")))

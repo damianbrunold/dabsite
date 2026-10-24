@@ -56,7 +56,8 @@
 (run-migrations! dbcfg (abs-path migrations-dir))
 
 (define auth
-  (make-auth cookie-name cookie-secret cookie-max-age auth-passphrase-hash))
+  (make-auth cookie-name cookie-secret cookie-max-age auth-passphrase-hash
+             secure-cookies?))
 
 (set-site-lang! default-site-lang)
 

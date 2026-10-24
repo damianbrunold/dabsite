@@ -1201,8 +1201,7 @@
                              "")))
                     ((string=? colour "") '())
                     (else
-                     `((span (@ (class "cal-swatch")
-                                (style ,(string-append "background:" colour)))
+                     `((span (@ (class "cal-swatch") (data-bg ,colour))
                              "")))))
               (span (@ (class "cal-time")) ,time-str)
               (span (@ (class "cal-title")) ,title
@@ -1375,10 +1374,10 @@
                            "cal-chip"
                            (string-append "cal-chip " extra)))
                (href ,(occ-href occ))
-               (style ,(if (or (not (string=? extra ""))
-                               (string=? colour ""))
-                           #f
-                           (string-append "border-left-color:" colour))))
+               (data-border-left ,(if (or (not (string=? extra ""))
+                                          (string=? colour ""))
+                                      #f
+                                      colour)))
             ,@(if all-day? '() `((span (@ (class "cal-chip-time")) ,starts-t " ")))
             (span (@ (class "cal-chip-title")) ,title))))
 
@@ -1562,8 +1561,7 @@
                                                      (value ,colour)))
                                            (button "Save")))
                                      (td (span (@ (class "cal-swatch")
-                                                  (style ,(string-append
-                                                            "background:" colour)))
+                                                  (data-bg ,colour))
                                                "")
                                          " " ,colour)
                                      (td (form (@ (method "post")
@@ -1707,7 +1705,7 @@
       (router-add! router "POST" "/calendar"
         (require-auth auth
           (lambda (req params)
-            (let* ((form  (parse-www-form (or (http-request-body req) "")))
+            (let* ((form  (http-request-form req))
                    (text  (string-trim-both (form-ref form "text" "")))
                    (today (db-today cfg)))
               (cond
@@ -1737,6 +1735,12 @@
                                      location category rrule)
                       (redirect "/calendar"))))))))))
 
+      ;; -- Categories admin page. Registered before /calendar/:id, which
+      ;; would otherwise match it (the router takes the first match). --
+      (router-add! router "GET" "/calendar/categories"
+        (require-auth auth
+          (lambda (req params) (render-categories req auth cfg))))
+
       ;; -- GET /calendar/:id --
       (router-add! router "GET" "/calendar/:id"
         (require-auth auth
@@ -1751,7 +1755,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((id   (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (title (string-trim-both (form-ref form "title" "")))
                    (notes (form-ref form "notes" ""))
                    (starts (form-ref form "starts_at" ""))
@@ -1782,7 +1786,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((id (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (d  (parse-iso-date (form-ref form "date" ""))))
               (when (and id d) (add-exdate! cfg id d))
               (redirect (string-append "/calendar/" (number->string id)))))))
@@ -1792,7 +1796,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((id (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (d  (parse-iso-date (form-ref form "date" ""))))
               (when (and id d) (truncate-recurrence-until! cfg id d))
               (redirect (string-append "/calendar/" (number->string id)))))))
@@ -1803,14 +1807,10 @@
           (lambda (req params) (render-ics cfg))))
 
       ;; -- Categories admin --
-      (router-add! router "GET" "/calendar/categories"
-        (require-auth auth
-          (lambda (req params) (render-categories req auth cfg))))
-
       (router-add! router "POST" "/calendar/categories"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (name (string-trim-both (form-ref form "name" "")))
                    (colour (form-or form "colour" "#888888")))
               (unless (string=? name "") (create-category! cfg name colour))
@@ -1820,7 +1820,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((id (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (name (string-trim-both (form-ref form "name" "")))
                    (colour (form-or form "colour" "#888888")))
               (when (and id (not (string=? name "")))

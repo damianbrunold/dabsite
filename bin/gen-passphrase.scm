@@ -13,11 +13,8 @@
         (scheme write)
         (scheme process-context)
         (srfi 1)
-        (scm crypto))
-
-(define iterations 200000)
-(define salt-bytes 16)
-(define key-bytes  32)
+        (scm crypto)
+        (scm crypto password))
 
 ;; A small curated wordlist of short, distinct, easy-to-type English
 ;; nouns. ~250 words = ~7.95 bits/word; five words = ~39 bits of
@@ -94,13 +91,7 @@
       (cond ((= i n) (get-output-string out))
             (else (write-char (rand-char) out) (loop (+ i 1)))))))
 
-(define (compute-hash pw)
-  (let* ((salt (random-bytes salt-bytes))
-         (hash (pbkdf2-sha256 (string->utf8 pw) salt iterations key-bytes)))
-    (string-append "pbkdf2$"
-                   (number->string iterations) "$"
-                   (base64-encode salt) "$"
-                   (base64-encode hash))))
+(define (compute-hash pw) (password-hash pw))
 
 (define (usage)
   (display "usage: scm bin/gen-passphrase.scm [words [N] | chars [N]]\n"

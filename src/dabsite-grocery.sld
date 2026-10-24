@@ -141,19 +141,16 @@
       ;; nuke the order).
       (with-db cfg
         (lambda (c)
-          (pg-exec c "BEGIN")
-          (guard (exn (#t
-                       (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
-                       (raise exn)))
-            (let loop ((ids item-ids) (pos 1))
-              (cond
-                ((null? ids) #t)
-                (else
-                 (pg-exec c
-                   "UPDATE grocery_shop_items SET position = $1 WHERE shop_id = $2 AND item_id = $3"
-                   pos shop-id (car ids))
-                 (loop (cdr ids) (+ pos 1)))))
-            (pg-exec c "COMMIT")))))
+          (with-pg-transaction c
+            (lambda (c)
+              (let loop ((ids item-ids) (pos 1))
+                (cond
+                  ((null? ids) #t)
+                  (else
+                   (pg-exec c
+                     "UPDATE grocery_shop_items SET position = $1 WHERE shop_id = $2 AND item_id = $3"
+                     pos shop-id (car ids))
+                   (loop (cdr ids) (+ pos 1))))))))))
 
     (define (swap-shop-positions! cfg shop-id item-id direction)
       ;; direction: 'up or 'down. Swaps position with the neighbour.
@@ -256,57 +253,54 @@
     (define (add-or-inc! cfg list-id item-id)
       (with-db cfg
         (lambda (c)
-          (pg-exec c "BEGIN")
-          (guard (exn (#t
-                       (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
-                       (raise exn)))
-          (let ((upd (pg-query c
-                       (string-append
-                         "UPDATE grocery_list_entries "
-                         "SET qty = qty + 1, bought = false "
-                         "WHERE list_id = $1 AND item_id = $2 "
-                         "RETURNING id")
-                       list-id item-id)))
-            (when (null? (pg-result-rows upd))
-              (let* ((pres (pg-query c
-                             (string-append
-                               "WITH tl AS ("
-                               "  SELECT shop_id FROM grocery_lists WHERE id = $1), "
-                               "new_alpha AS ("
-                               "  SELECT lower(name) AS a FROM grocery_items WHERE id = $2), "
-                               "new_shop_pos AS ("
-                               "  SELECT (SELECT si.position FROM grocery_shop_items si, tl "
-                               "          WHERE si.shop_id = tl.shop_id AND si.item_id = $2) AS p), "
-                               "candidates AS ("
-                               "  SELECT e.position "
-                               "  FROM grocery_list_entries e "
-                               "  JOIN grocery_items i ON i.id = e.item_id, tl, new_alpha, new_shop_pos "
-                               "  WHERE e.list_id = $1 AND e.item_id IS NOT NULL "
-                               "    AND ("
-                               "      (tl.shop_id IS NULL AND lower(i.name) > new_alpha.a) "
-                               "      OR "
-                               "      (tl.shop_id IS NOT NULL AND "
-                               "       (SELECT si.position FROM grocery_shop_items si "
-                               "        WHERE si.shop_id = tl.shop_id AND si.item_id = e.item_id) "
-                               "       > new_shop_pos.p))) "
-                               "SELECT COALESCE("
-                               "  (SELECT MIN(position) FROM candidates), "
-                               "  (SELECT COALESCE(MAX(position), 0) + 1 "
-                               "   FROM grocery_list_entries WHERE list_id = $1))::text")
-                             list-id item-id))
-                     (pos (string->number
-                            (vector-ref (car (pg-result-rows pres)) 0))))
-                (pg-query c
-                  (string-append
-                    "UPDATE grocery_list_entries SET position = position + 1 "
-                    "WHERE list_id = $1 AND position >= $2")
-                  list-id pos)
-                (pg-query c
-                  (string-append
-                    "INSERT INTO grocery_list_entries "
-                    "(list_id, item_id, qty, position) VALUES ($1, $2, 1, $3)")
-                  list-id item-id pos)))
-            (pg-exec c "COMMIT"))))))
+          (with-pg-transaction c
+            (lambda (c)
+              (let ((upd (pg-query c
+                           (string-append
+                             "UPDATE grocery_list_entries "
+                             "SET qty = qty + 1, bought = false "
+                             "WHERE list_id = $1 AND item_id = $2 "
+                             "RETURNING id")
+                           list-id item-id)))
+                (when (null? (pg-result-rows upd))
+                  (let* ((pres (pg-query c
+                                 (string-append
+                                   "WITH tl AS ("
+                                   "  SELECT shop_id FROM grocery_lists WHERE id = $1), "
+                                   "new_alpha AS ("
+                                   "  SELECT lower(name) AS a FROM grocery_items WHERE id = $2), "
+                                   "new_shop_pos AS ("
+                                   "  SELECT (SELECT si.position FROM grocery_shop_items si, tl "
+                                   "          WHERE si.shop_id = tl.shop_id AND si.item_id = $2) AS p), "
+                                   "candidates AS ("
+                                   "  SELECT e.position "
+                                   "  FROM grocery_list_entries e "
+                                   "  JOIN grocery_items i ON i.id = e.item_id, tl, new_alpha, new_shop_pos "
+                                   "  WHERE e.list_id = $1 AND e.item_id IS NOT NULL "
+                                   "    AND ("
+                                   "      (tl.shop_id IS NULL AND lower(i.name) > new_alpha.a) "
+                                   "      OR "
+                                   "      (tl.shop_id IS NOT NULL AND "
+                                   "       (SELECT si.position FROM grocery_shop_items si "
+                                   "        WHERE si.shop_id = tl.shop_id AND si.item_id = e.item_id) "
+                                   "       > new_shop_pos.p))) "
+                                   "SELECT COALESCE("
+                                   "  (SELECT MIN(position) FROM candidates), "
+                                   "  (SELECT COALESCE(MAX(position), 0) + 1 "
+                                   "   FROM grocery_list_entries WHERE list_id = $1))::text")
+                                 list-id item-id))
+                         (pos (string->number
+                                (vector-ref (car (pg-result-rows pres)) 0))))
+                    (pg-query c
+                      (string-append
+                        "UPDATE grocery_list_entries SET position = position + 1 "
+                        "WHERE list_id = $1 AND position >= $2")
+                      list-id pos)
+                    (pg-query c
+                      (string-append
+                        "INSERT INTO grocery_list_entries "
+                        "(list_id, item_id, qty, position) VALUES ($1, $2, 1, $3)")
+                      list-id item-id pos)))))))))
 
     ;; Ad-hoc entry: no catalog row, always appended at the end.
     (define (add-adhoc! cfg list-id name)
@@ -323,19 +317,16 @@
     (define (set-list-order! cfg list-id entry-ids)
       (with-db cfg
         (lambda (c)
-          (pg-exec c "BEGIN")
-          (guard (exn (#t
-                       (guard (e (#t #f)) (pg-exec c "ROLLBACK"))
-                       (raise exn)))
-            (let loop ((ids entry-ids) (pos 1))
-              (cond
-                ((null? ids) #t)
-                (else
-                 (pg-exec c
-                   "UPDATE grocery_list_entries SET position = $1 WHERE list_id = $2 AND id = $3"
-                   pos list-id (car ids))
-                 (loop (cdr ids) (+ pos 1)))))
-            (pg-exec c "COMMIT")))))
+          (with-pg-transaction c
+            (lambda (c)
+              (let loop ((ids entry-ids) (pos 1))
+                (cond
+                  ((null? ids) #t)
+                  (else
+                   (pg-exec c
+                     "UPDATE grocery_list_entries SET position = $1 WHERE list_id = $2 AND id = $3"
+                     pos list-id (car ids))
+                   (loop (cdr ids) (+ pos 1))))))))))
 
     (define (dec-entry! cfg entry-id)
       ;; -1; if it reaches 0, delete the row.
@@ -705,7 +696,7 @@
       (router-add! router "POST" "/grocery/items"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (name (string-trim-both (form-ref form "name" ""))))
               (unless (string=? name "") (create-item! cfg name))
               (redirect "/grocery/items")))))
@@ -724,7 +715,7 @@
       (router-add! router "POST" "/grocery/shops"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (name (string-trim-both (form-ref form "name" ""))))
               (unless (string=? name "") (create-shop! cfg name))
               (redirect "/grocery/shops")))))
@@ -740,7 +731,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((id (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (name (string-trim-both (form-ref form "name" ""))))
               (when (and id (not (string=? name "")))
                 (rename-shop! cfg id name))
@@ -787,7 +778,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((sid (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (raw  (form-ref form "order" ""))
                    (parts (filter
                             (lambda (s) (not (string=? s "")))
@@ -809,7 +800,7 @@
       (router-add! router "POST" "/grocery/lists"
         (require-auth auth
           (lambda (req params)
-            (let* ((form (parse-www-form (or (http-request-body req) "")))
+            (let* ((form (http-request-form req))
                    (raw  (form-ref form "shop" ""))
                    (sid  (and (not (string=? raw "")) (string->number raw)))
                    (id   (create-list! cfg sid)))
@@ -879,7 +870,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((lid  (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (raw  (form-ref form "order" ""))
                    (parts (filter
                             (lambda (s) (not (string=? s "")))
@@ -892,7 +883,7 @@
         (require-auth auth
           (lambda (req params)
             (let* ((lid  (string->number (params-ref params "id")))
-                   (form (parse-www-form (or (http-request-body req) "")))
+                   (form (http-request-form req))
                    (name (string-trim-both (form-ref form "name" ""))))
               (when (and lid (not (string=? name "")))
                 (add-adhoc! cfg lid name))
