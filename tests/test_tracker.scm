@@ -56,10 +56,12 @@
   (test-equal '("one") (split-topics "one"))
   (test-equal '("one" "two") (split-topics "one,two"))
   (test-equal '("one" "two") (split-topics "  one ,  two  "))
-  (test-equal '("Two Words" "another")
+  (test-equal '("two words" "another")
               (split-topics "Two Words, another"))
   ;; empties collapsed
-  (test-equal '("a" "b") (split-topics ", a, ,b,")))
+  (test-equal '("a" "b") (split-topics ", a, ,b,"))
+  ;; case is normalized to the instance's convention; duplicates collapse
+  (test-equal '("work" "home") (split-topics "Work, home, work, HOME")))
 
 (test-end "tracker")
 

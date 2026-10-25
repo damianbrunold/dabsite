@@ -113,14 +113,20 @@
     (define (csv-row fields)
       (string-append (string-join (map csv-escape fields) ",") "\r\n"))
 
+    (define (normalize-topic name)
+      ;; Topic names on this instance are all lowercase; site.js mirrors this
+      ;; via the form's data-topic-case attribute.
+      (string-downcase name))
+
     (define (split-topics s)
-      ;; Comma-separated topic names. Trims each, drops empties, lowercases
-      ;; nothing — topic names are case-sensitive as the user typed.
+      ;; Comma-separated topic names. Trims each, drops empties, normalizes
+      ;; the case and drops the duplicates that leaves.
       (cond
         ((not (string? s)) '())
         (else
-         (filter (lambda (x) (not (string=? x "")))
-                 (map string-trim-both
+         (delete-duplicates
+          (filter (lambda (x) (not (string=? x "")))
+                 (map (lambda (x) (normalize-topic (string-trim-both x)))
                       (let ((n (string-length s)))
                         (let loop ((i 0) (start 0) (acc '()))
                           (cond
@@ -129,7 +135,7 @@
                             ((char=? (string-ref s i) #\,)
                              (loop (+ i 1) (+ i 1)
                                    (cons (substring s start i) acc)))
-                            (else (loop (+ i 1) start acc))))))))))
+                            (else (loop (+ i 1) start acc)))))))))))
 
     ;; ============================================================
     ;; DB helpers
@@ -148,7 +154,7 @@
 
     (define (find-topic-id cfg name)
       (let ((rs (rows cfg
-                  "SELECT id FROM tracker_topics WHERE name = $1 LIMIT 1"
+                  "SELECT id FROM tracker_topics WHERE lower(name) = lower($1) ORDER BY id LIMIT 1"
                   (list name))))
         (and (pair? rs) (string->number (vector-ref (car rs) 0)))))
 
@@ -167,7 +173,10 @@
 
     (define (create-topic! cfg name)
       (exec cfg
-            "INSERT INTO tracker_topics (name) VALUES ($1) ON CONFLICT (name) DO NOTHING"
+            (string-append
+              "INSERT INTO tracker_topics (name) SELECT $1::text "
+              "WHERE NOT EXISTS (SELECT 1 FROM tracker_topics "
+              "                  WHERE lower(name) = lower($1))")
             (list name)))
 
     (define (toggle-topic-archived! cfg id)
@@ -311,7 +320,7 @@
       ;; In-transaction variant of ensure-topic!.
       (let* ((sel (pg-result-rows
                     (pg-query c
-                      "SELECT id FROM tracker_topics WHERE name = $1 LIMIT 1"
+                      "SELECT id FROM tracker_topics WHERE lower(name) = lower($1) ORDER BY id LIMIT 1"
                       name))))
         (cond
           ((pair? sel) (string->number (vector-ref (car sel) 0)))
@@ -358,15 +367,27 @@
                    (placeholder "search text") (value ,(or q ""))))
          (input (@ (type "date") (name "from") (value ,(or from-d ""))))
          (input (@ (type "date") (name "to")   (value ,(or to-d ""))))
-         (select (@ (name "topic") (multiple #t) (size "3")
-                    (class "tracker-topic-select"))
-           ,@(map (lambda (t)
-                    (let ((tid (row-field t "id")))
-                      `(option (@ (value ,tid)
-                                  (selected
-                                   ,(and (member tid topics-selected string=?) #t)))
-                               ,(row-field t "name"))))
-                  topics))
+         ;; Topic filter as checkbox pills, folded away until asked for.
+         ;; The summary shows how many are active while it's closed.
+         (details (@ (class "tracker-topic-filter"))
+           (summary "Filter by topic"
+             ,(let ((n (length (filter (lambda (t)
+                                         (member (row-field t "id")
+                                                 topics-selected string=?))
+                                       topics))))
+                (if (> n 0)
+                    (string-append " (" (number->string n) ")")
+                    "")))
+           (div (@ (class "tracker-topic-buttons"))
+             ,@(map (lambda (t)
+                      (let ((tid (row-field t "id")))
+                        `(label (@ (class "tracker-topic-pill"))
+                           (input (@ (type "checkbox") (name "topic")
+                                     (value ,tid)
+                                     (checked
+                                      ,(and (member tid topics-selected string=?) #t))))
+                           (span ,(row-field t "name")))))
+                    topics)))
          (button (@ (type "submit")) "Apply")
          (a (@ (class "admin-link") (href "/tracker/topics")) "topics")))
 
@@ -403,7 +424,8 @@
             (pf-topics  (or (and prefill (assq-ref prefill 'topics))  ""))
             (pf-when    (or (and prefill (assq-ref prefill 'when))    "")))
         `(form (@ (method "post") (action "/tracker")
-                  (class "feed-new tracker-add") (data-tracker-add #t))
+                  (class "feed-new tracker-add") (data-tracker-add #t)
+                  (data-topic-case "lower"))
            (h2 "Add")
            (label (@ (class "tracker-what")) "What "
              (textarea (@ (name "text") (required #t) (maxlength "1000")
@@ -418,16 +440,19 @@
            (label "Topics "
              (input (@ (type "text") (name "topics")
                        (placeholder "comma, separated")
-                       (list "tracker-topics-list")
                        (value ,pf-topics))))
-           (datalist (@ (id "tracker-topics-list"))
-             ,@(map (lambda (t)
-                      `(option (@ (value ,(row-field t "name")))))
-                    topics))
            (label "When (optional) "
              (input (@ (type "datetime-local") (name "completed")
                        (value ,pf-when))))
-           (button (@ (type "submit")) "Log it"))))
+           (button (@ (type "submit")) "Log it")
+           ;; Known topics as toggle buttons; site.js wires the clicks.
+           (div (@ (class "tracker-topic-buttons") (data-tracker-topics #t))
+             ,@(map (lambda (t)
+                      (let ((name (row-field t "name")))
+                        `(button (@ (type "button") (class "tracker-topic-btn")
+                                    (data-topic ,name))
+                           ,name)))
+                    topics)))))
 
     (define (assq-ref alist key)
       (let ((p (assq key alist))) (cond (p (cdr p)) (else #f))))
@@ -713,7 +738,8 @@
         (require-auth auth
           (lambda (req params)
             (let* ((form (http-request-form req))
-                   (name (string-trim-both (form-ref form "name" ""))))
+                   (name (normalize-topic
+                           (string-trim-both (form-ref form "name" "")))))
               (cond
                 ((string=? name "")
                  (render-error 400 "Name is required."))

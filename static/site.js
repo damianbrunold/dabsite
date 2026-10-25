@@ -156,7 +156,8 @@
 //
 // Leading tokens (separated by whitespace) are stripped and applied to the
 // other fields as the user types:
-//   +topic        -> add "topic" to the topics field
+//   +topic        -> add "topic" to the topics field (a new topic
+//                    also gets a button in the topic row)
 //   -topic        -> remove "topic" from the topics field
 //   !90 / !1:30   -> set duration field
 //   !45m / !1h30  -> set duration field
@@ -170,6 +171,15 @@
     var when = form.querySelector('input[name="completed"]');
     if (!what) return;
 
+    // Topic names follow the instance's capitalization (data-topic-case
+    // on the form, mirroring normalize-topic on the server).
+    var topicCase = form.getAttribute('data-topic-case');
+    function normalizeTopic(name) {
+        if (topicCase === 'upper') return name.toUpperCase();
+        if (topicCase === 'lower') return name.toLowerCase();
+        return name;
+    }
+
     function topicList() {
         return tops.value.split(',').map(function (s) {
             return s.trim();
@@ -177,12 +187,17 @@
     }
     function setTopics(arr) {
         tops.value = arr.join(', ');
+        syncButtons();
+    }
+    function hasTopic(name) {
+        var lower = name.toLowerCase();
+        return topicList().some(function (t) {
+            return t.toLowerCase() === lower;
+        });
     }
     function addTopic(name) {
+        if (hasTopic(name)) return;
         var list = topicList();
-        for (var i = 0; i < list.length; i++) {
-            if (list[i].toLowerCase() === name.toLowerCase()) return;
-        }
         list.push(name);
         setTopics(list);
     }
@@ -192,23 +207,67 @@
         }));
     }
 
-    // Known topics, read from the datalist the form ships with.
-    function knownTopics() {
-        var opts = document.querySelectorAll(
-            '#tracker-topics-list option');
-        var out = [];
-        opts.forEach(function (o) {
-            var v = o.getAttribute('value');
-            if (v) out.push(v);
-        });
-        return out;
+    // Known topics: one toggle button each in the row the form ships with.
+    var topicRow = form.querySelector('[data-tracker-topics]');
+    function topicButtons() {
+        if (!topicRow) return [];
+        return Array.prototype.slice.call(
+            topicRow.querySelectorAll('button[data-topic]'));
     }
-    function topicKnown(name) {
+    // Canonical spelling of a known topic (case-insensitive), or null.
+    function knownTopic(name) {
         var lower = name.toLowerCase();
-        return knownTopics().some(function (t) {
-            return t.toLowerCase() === lower;
+        var btns = topicButtons();
+        for (var i = 0; i < btns.length; i++) {
+            var t = btns[i].getAttribute('data-topic');
+            if (t.toLowerCase() === lower) return t;
+        }
+        return null;
+    }
+    function syncButtons() {
+        topicButtons().forEach(function (b) {
+            var on = hasTopic(b.getAttribute('data-topic'));
+            b.classList.toggle('selected', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
         });
     }
+    // Insert a button for a new topic, keeping the row alphabetical.
+    function addTopicButton(name) {
+        if (!topicRow) return;
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tracker-topic-btn';
+        b.setAttribute('data-topic', name);
+        b.textContent = name;
+        var btns = topicButtons(), before = null;
+        for (var i = 0; i < btns.length; i++) {
+            var t = btns[i].getAttribute('data-topic');
+            if (t.localeCompare(name, undefined,
+                                { sensitivity: 'base' }) > 0) {
+                before = btns[i];
+                break;
+            }
+        }
+        topicRow.insertBefore(b, before);
+        syncButtons();
+    }
+    if (topicRow) {
+        topicRow.addEventListener('click', function (ev) {
+            var b = ev.target.closest('button[data-topic]');
+            if (!b) return;
+            var name = b.getAttribute('data-topic');
+            if (hasTopic(name)) removeTopic(name); else addTopic(name);
+        });
+    }
+    tops.addEventListener('input', syncButtons);
+    tops.addEventListener('change', function () {
+        var seen = Object.create(null);
+        setTopics(topicList().map(normalizeTopic).filter(function (t) {
+            if (seen[t]) return false;
+            return (seen[t] = true);
+        }));
+    });
+    syncButtons();
 
     // Mirror of (parse-minutes) in damian-tracker.sld — used to gate the !
     // prefix so a bare "!" followed by an unrelated word doesn't get eaten.
@@ -240,13 +299,21 @@
             : /^-([^\s,]+)\s+/;
         var m = text.match(re);
         if (!m) return 0;
-        var name = m[1];
-        if (!topicKnown(name)) {
-            var key = sign + name.toLowerCase();
+        var name = normalizeTopic(m[1]);
+        var known = knownTopic(name);
+        if (known) {
+            name = known;
+        } else if (sign === '-') {
+            // Removing something that isn't a topic: leave the text alone
+            // unless it's sitting in the topics field.
+            if (!hasTopic(name)) return 0;
+        } else {
+            var key = name.toLowerCase();
             if (rejectedTopics[key]) return 0;
             var ok = window.confirm(
                 "Add new topic '" + name + "'?");
             if (!ok) { rejectedTopics[key] = true; return 0; }
+            addTopicButton(name);
         }
         action(name);
         return m[0].length;

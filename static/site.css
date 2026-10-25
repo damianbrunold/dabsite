@@ -779,6 +779,25 @@ form.tracker-add {
 form.tracker-add label.tracker-what {
     grid-column: 1 / -1;
 }
+div.tracker-topic-buttons {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+div.tracker-topic-buttons:empty { display: none; }
+button.tracker-topic-btn {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.85rem;
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+}
+button.tracker-topic-btn.selected {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
 form.tracker-add textarea[name="text"] {
     width: 100%;
     box-sizing: border-box;
@@ -796,10 +815,45 @@ p.tracker-window-note {
     margin: 0 0 0.5rem;
 }
 
-select.tracker-topic-select {
-    min-width: 10rem;
-    height: auto;
-    padding: 0.2rem 0.3rem;
+details.tracker-topic-filter > summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 0.9rem;
+}
+details.tracker-topic-filter[open] {
+    flex: 1 1 100%;
+    order: 10;
+}
+details.tracker-topic-filter > div.tracker-topic-buttons {
+    margin-top: 0.4rem;
+}
+/* Filter pills: a visually hidden checkbox drives the span's look. */
+label.tracker-topic-pill { position: relative; }
+label.tracker-topic-pill input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+label.tracker-topic-pill span {
+    display: inline-block;
+    cursor: pointer;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.85rem;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+}
+label.tracker-topic-pill input:checked + span {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+label.tracker-topic-pill input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 section.tracker-summary {
@@ -1477,11 +1531,6 @@ nav.top { position: relative; }
     body.feeds-page form.feed-filters > button[type=submit] {
         flex: 0 0 auto;
         white-space: nowrap;
-    }
-    /* Tracker: the multi-select takes its own row. */
-    form.feed-filters > select.tracker-topic-select {
-        width: 100%;
-        flex: 1 1 100%;
     }
     form.feed-filters > .checkbox {
         flex: 1 1 100%;
