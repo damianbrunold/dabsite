@@ -1,0 +1,67 @@
+dabsite for Debian/Ubuntu
+=========================
+
+Layout
+  /opt/dabsite/app/               the app (bin, src, migrations, static)
+  /opt/dabsite/bin/scm            the dabscm runtime it was built with
+  /opt/dabsite/VERSION            package version, commit, dabscm version
+  /etc/dabsite/config.scm         the config (created on first install,
+                                  never overwritten; root:dabsite 0640)
+  /etc/default/dabsite            optional: JAVA_OPTS="-Xmx512m"
+  /var/lib/dabsite/files          uploaded files (content-addressed)
+  /usr/bin/dabsite-admin          runs a tool from app/bin, e.g.
+                                    dabsite-admin hash-passphrase 'passphrase'
+                                    dabsite-admin gen-passphrase
+
+Services
+  dabsite.service                 the web app (127.0.0.1:8088 by default)
+  dabsite-health.timer            probes /healthz every minute, restarts
+                                  the app after two failures
+  dabsite-restart.timer           daily restart at 04:00
+
+First install
+  1. PostgreSQL user and database:
+       sudo -u postgres createuser -P dabsite
+       sudo -u postgres createdb -O dabsite dabsite
+  2. Edit /etc/dabsite/config.scm: db-password (and db-user/db-name if
+     different), auth-passphrase-hash from
+       dabsite-admin hash-passphrase 'your passphrase'
+     cookie-secret is already filled with a fresh random secret.
+  3. sudo systemctl start dabsite dabsite-health.timer dabsite-restart.timer
+     The schema migrations run on start: journalctl -u dabsite -f
+  4. Reverse proxy with TLS in front of 127.0.0.1:8088: see
+     nginx.conf.example / apache.conf.example in this directory. Keep the
+     login and poll rate limits, limit_conn and the client timeouts.
+
+The services start automatically on install and upgrade once no setting in
+the config holds "change-me" or a REPLACE_WITH_... placeholder.
+
+Moving an existing installation (/home/dab/www/dabsite, user dab)
+  1. Stop and remove the old units; units in /etc/systemd/system would
+     shadow the packaged ones:
+       sudo systemctl disable --now dabsite.service dabsite-health.timer dabsite-restart.timer
+       sudo rm /etc/systemd/system/dabsite*.service /etc/systemd/system/dabsite*.timer
+       sudo systemctl daemon-reload
+  2. sudo apt install ./dabsite_<version>_all.deb
+  3. Copy db-*, auth-passphrase-hash, cookie-secret (keeps logins valid),
+     cookie-name and default-site-lang from the old config.scm into
+     /etc/dabsite/config.scm. Keep files-dir "/var/lib/dabsite/files" and
+     secure-cookies? #t.
+  4. Copy the uploaded files:
+       sudo cp -a /home/dab/www/dabsite/data/files/. /var/lib/dabsite/files/
+       sudo chown -R dabsite:dabsite /var/lib/dabsite/files
+  5. sudo systemctl start dabsite dabsite-health.timer dabsite-restart.timer
+  The database stays as it is; the app connects with the credentials from
+  the config, not as the system user.
+
+Upgrades
+  sudo apt install ./dabsite_<newer>_all.deb restarts the services; the
+  config and the data are kept.
+
+Removal
+  apt remove keeps /etc/dabsite and /var/lib/dabsite; apt purge removes
+  the config but still keeps the data and the database.
+
+Memory
+  The JVM takes 1/4 of the RAM by default. Set JAVA_OPTS="-Xmx512m" (or
+  what fits) in /etc/default/dabsite.

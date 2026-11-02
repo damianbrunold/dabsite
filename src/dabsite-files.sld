@@ -184,14 +184,14 @@
              (close-output-port port)
              #t)))))
 
-    (define (read-blob files-dir sha)
-      (let* ((path (blob-path files-dir sha))
-             (size (file-size path))
-             (port (open-binary-input-file path))
-             (bv   (read-bytevector size port)))
-        (close-input-port port)
-        (cond ((eof-object? bv) (bytevector))
-              (else bv))))
+    ;; The blob as a response body sent straight from the file, so large
+    ;; files never have to fit in memory (public ones can be fetched by
+    ;; anyone, many at once). 404 when the blob is missing on disk.
+    (define (blob-response files-dir sha headers)
+      (let ((path (blob-path files-dir sha)))
+        (if (file-exists? path)
+            (make-http-file-response 200 headers path)
+            (render-error 404 "Not found."))))
 
     (define (refcount-blob cfg sha)
       (let ((rs (with-db cfg
@@ -533,14 +533,12 @@
               (cond
                 ((not f) (render-error 404 "File not found."))
                 (else
-                 (let* ((data (read-blob files-dir (row-field f "sha256")))
-                        (mime (row-field f "mime"))
+                 (let* ((mime (row-field f "mime"))
                         (name (row-field f "name")))
-                   (make-http-response 200
+                   (blob-response files-dir (row-field f "sha256")
                      (list (cons "Content-Type" (safe-content-type mime name))
                            (cons "Content-Disposition"
-                                 (content-disposition mime name)))
-                     data))))))))
+                                 (content-disposition mime name)))))))))))
 
       ;; ----- delete -----
       (router-add! router "POST" "/files/:id/delete"
@@ -584,15 +582,12 @@
                  (cond
                    ((not f) (render-error 404 "Not found."))
                    (else
-                    (let* ((data (read-blob files-dir
-                                             (row-field f "sha256")))
-                           (mime (row-field f "mime"))
+                    (let* ((mime (row-field f "mime"))
                            (name (row-field f "name")))
-                      (make-http-response 200
+                      (blob-response files-dir (row-field f "sha256")
                         (list (cons "Content-Type" (safe-content-type mime name))
                               (cons "Content-Disposition"
                                     (content-disposition mime name))
-                              (cons "Cache-Control" "public, max-age=3600"))
-                        data)))))))))))
+                              (cons "Cache-Control" "public, max-age=3600")))))))))))))
 
 ))

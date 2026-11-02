@@ -20,6 +20,8 @@
   (export install-poll-routes!
           ;; exposed for tests
           tally
+          clean-voter-name
+          clean-vote-choices
           valid-slug?
           random-slug)
   (begin
@@ -62,6 +64,35 @@
                            (char=? c #\-) (char=? c #\_))
                        (loop (+ i 1)))
                       (else #f)))))))))
+
+    ;; ============================================================
+    ;; Vote input (public, anonymous: never trust it)
+    ;; ============================================================
+
+    (define max-voter-name-length 80)
+    ;; New voters per poll; existing voters can always change their answer.
+    (define max-responses-per-poll 500)
+
+    (define (clean-voter-name s)
+      (let ((t (string-trim-both s)))
+        (if (> (string-length t) max-voter-name-length)
+            (substring t 0 max-voter-name-length)
+            t)))
+
+    ;; choices: ((option-id-string . value) ...) from the form. Keeps only
+    ;; this poll's options (option-ids, strings) with a known value, each
+    ;; option once.
+    (define (clean-vote-choices choices option-ids)
+      (let loop ((cs choices) (seen '()) (acc '()))
+        (cond
+          ((null? cs) (reverse acc))
+          (else
+           (let ((oid (car (car cs))) (v (cdr (car cs))))
+             (if (and (member oid option-ids)
+                      (not (member oid seen))
+                      (member v '("yes" "no" "maybe")))
+                 (loop (cdr cs) (cons oid seen) (cons (car cs) acc))
+                 (loop (cdr cs) seen acc)))))))
 
     ;; ============================================================
     ;; Tally
@@ -254,6 +285,13 @@
       (pg-exec c "DELETE FROM poll_choices WHERE response_id = $1" rid))
 
     (define (insert-response! c poll-id name owner-cookie)
+      (let ((n (string->number
+                 (vector-ref (car (pg-result-rows
+                                    (pg-query c "SELECT count(*) FROM poll_responses WHERE poll_id = $1"
+                                              poll-id)))
+                             0))))
+        (when (>= n max-responses-per-poll)
+          (raise 'poll-full)))
       (let ((rows (pg-result-rows
                     (pg-query c
                       (string-append
@@ -680,8 +718,16 @@
               (else
                (let* ((poll-id (string->number (row-field poll "id")))
                       (form    (http-request-form req))
-                      (name    (string-trim-both (form-ref form "name" "")))
-                      (radios  (form-refs-by-prefix form "option_"))
+                      (name    (clean-voter-name (form-ref form "name" "")))
+                      (option-ids (map (lambda (o) (cdr (assoc "id" o)))
+                                       (poll-options cfg poll-id)))
+                      (radios  (clean-vote-choices
+                                 (map (lambda (p)
+                                        ;; key looks like "option_<id>"
+                                        (cons (substring (car p) 7 (string-length (car p)))
+                                              (cdr p)))
+                                      (form-refs-by-prefix form "option_"))
+                                 option-ids))
                       (existing-cookie (request-owner-cookie req))
                       (cookie  (or existing-cookie (new-owner-cookie)))
                       (set-cookie? (not existing-cookie)))
@@ -691,14 +737,9 @@
                    ((null? radios)
                     (render-error 400 "Please answer every option."))
                    (else
-                    (let* ((choices
-                             (map (lambda (p)
-                                    (let* ((k (car p))
-                                           ;; key looks like "option_<id>"
-                                           (oid (substring k 7
-                                                  (string-length k))))
-                                      (cons oid (cdr p))))
-                                  radios)))
+                    (guard (e ((eq? e 'poll-full)
+                               (render-error 403 "This poll has reached its maximum number of responses.")))
+                    (let* ((choices radios))
                       (upsert-response! cfg poll-id cookie name choices)
                       (let ((headers (list
                                        (cons "Location"
@@ -712,6 +753,6 @@
                                    headers)
                              ""))
                           (else
-                           (make-http-response 302 headers ""))))))))))))))
+                           (make-http-response 302 headers "")))))))))))))))
 
 ))

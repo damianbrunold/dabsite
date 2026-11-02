@@ -9,16 +9,20 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-User=dab
-Group=dab
-WorkingDirectory=/home/dab/www/dabsite
-ExecStart=/home/dab/bin/scm bin/server.scm config.scm
+User=dabsite
+Group=dabsite
+WorkingDirectory=/opt/dabsite/app
+# Optional JAVA_OPTS (e.g. -Xmx512m); see README.Debian.
+EnvironmentFile=-/etc/default/dabsite
+ExecStart=/opt/dabsite/bin/scm bin/server.scm /etc/dabsite/config.scm
 
 # Restart whenever the process exits, not only on failure. Combined with
 # the daily restart timer this means the service is self-healing across
 # OOMs, transient DB outages, and unexpected exceptions.
 Restart=always
 RestartSec=3s
+# The JVM exits with 128+SIGTERM on a normal stop.
+SuccessExitStatus=143
 
 # Give the scheme HTTP server (graceful-stop-ms = 10s by default) time
 # to drain in-flight requests before SIGKILL.
@@ -29,12 +33,13 @@ StandardOutput=journal
 StandardError=journal
 
 # --- hardening ---
+# The only writable path is the data directory.
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectSystem=full
-ProtectHome=read-only
-# The app needs to write to log/ and data/ (uploaded files).
-ReadWritePaths=/home/dab/www/dabsite/log /home/dab/www/dabsite/data
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0027
+ReadWritePaths=/var/lib/dabsite
 
 [Install]
 WantedBy=multi-user.target

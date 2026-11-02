@@ -49,6 +49,15 @@
 (test-group "tally with no choices"
   (test-equal '((0 0 0) (0 0 0)) (tally '("1" "2") '())))
 
+(test-group "vote input from anonymous voters"
+  (test-equal "name trimmed" "Ann" (clean-voter-name "  Ann  "))
+  (test-equal "name capped at 80" 80 (string-length (clean-voter-name (make-string 10000 #\x))))
+  (test-equal "only this poll's options, known values, each once"
+    '(("1" . "yes") ("2" . "maybe"))
+    (clean-vote-choices
+      '(("1" . "yes") ("99" . "yes") ("2" . "maybe") ("1" . "no") ("3" . "<script>") ("x" . "yes"))
+      '("1" "2" "3"))))
+
 (test-end "polls")
 
 (exit (if (= 0 (last-run-failed-tests)) 0 1))

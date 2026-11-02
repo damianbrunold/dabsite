@@ -28,6 +28,13 @@
     ProxyRequests       Off
     ProxyTimeout        30
 
+    # Slow clients are cut off by Apache, not by the app's threads
+    # (mod_reqtimeout, enabled by default on Debian).
+    RequestReadTimeout header=15-20,MinRate=500 body=30,MinRate=500
+
+    # Apache has no per-client rate limit for /login built in; the nginx
+    # example has one. With Apache, throttle failed logins with fail2ban.
+
     # Send everything to the scheme app. The app serves its own /static/
     # path, so we don't bypass with an Alias.
     ProxyPass        / http://127.0.0.1:8088/

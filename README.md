@@ -135,8 +135,8 @@ Samples in `deploy/`:
   reverse-proxy vhosts that forward everything to
   `http://127.0.0.1:8088/`. TLS is the proxy's job; the app itself
   binds loopback.
-* `deploy/systemd/dabsite.service` — main unit. Runs as a
-  non-privileged user, restarts on failure, gives the scheme HTTP
+* `deploy/systemd/dabsite.service` — main unit. Runs as the
+  `dabsite` system user, restarts on failure, gives the scheme HTTP
   server its 10 s graceful drain before SIGKILL.
 * `deploy/systemd/dabsite-health.{service,timer}` — minute-by-minute
   probe against `/healthz`. Two consecutive failures triggers a
@@ -144,15 +144,31 @@ Samples in `deploy/`:
 * `deploy/systemd/dabsite-restart.{service,timer}` — daily restart
   at 04:00 (randomized ±2m). Cheap insurance against slow leaks.
 
-### Installing the units
+### Installing as a Debian package
+
+The server runs the app from a `.deb` built here (pure Scheme, no
+dpkg tools needed):
 
 ```
-sudo cp deploy/systemd/dabsite*.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now dabsite.service
-sudo systemctl enable --now dabsite-health.timer
-sudo systemctl enable --now dabsite-restart.timer
+(cd ../dabscm && scm build-scm-java.scm)     # the runtime that gets bundled
+scm package-deb.scm                         # -> dist/dabsite_<version>_all.deb
 ```
+
+The version comes from the last commit (uncommitted changes need
+`--allow-dirty`). On the server:
+
+```
+sudo apt install ./dabsite_<version>_all.deb
+```
+
+This installs the app under `/opt/dabsite` with its own runtime, the
+units above, a `dabsite` system user and `/etc/dabsite/config.scm`
+(created once, with a fresh `cookie-secret`). Fill in the database
+password and `auth-passphrase-hash` (`dabsite-admin hash-passphrase '…'`),
+then `sudo systemctl start dabsite dabsite-health.timer dabsite-restart.timer`.
+Upgrades are another `apt install` of a newer package; the config and
+data are kept. Details, including moving an existing manual install, are
+in [deploy/debian/README.Debian](deploy/debian/README.Debian).
 
 ### Day-to-day
 
