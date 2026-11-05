@@ -4,7 +4,6 @@
 
 (import (scheme base)
         (scheme process-context)
-        (scheme write)
         (srfi 13))
 
 (import (srfi 64)

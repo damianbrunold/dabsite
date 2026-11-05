@@ -2,7 +2,6 @@
 
 (import (scheme base)
         (scheme process-context)
-        (scheme write)
         (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 

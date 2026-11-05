@@ -19,7 +19,6 @@
         (scheme time)
         (scheme write)
         (srfi 1)
-        (srfi 13)
         (srfi 18)
         (scm crypto)
         (scm net http client)

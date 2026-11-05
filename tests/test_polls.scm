@@ -3,7 +3,6 @@
 (import (scheme base)
         (scheme cxr)
         (scheme process-context)
-        (scheme write)
         (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 

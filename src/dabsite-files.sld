@@ -1,23 +1,21 @@
 (define-library (dabsite files)
   (import (scheme base)
-          (scheme write)
-          (scheme file)
           (scheme char)
-          (scheme cxr)
-          (srfi 1)
+          (scheme file)
+          (scheme write)
           (srfi 13)
           (scm crypto)
           (scm database postgres)
           (scm fs)
-          (scm net http request)
-          (scm net http response)
-          (scm net http route)
-          (scm net http multipart)
           (scm html builder)
           (scm log)
+          (scm net http multipart)
+          (scm net http request)
+          (except (scm net http response) html-response)
+          (scm net http route)
+          (dabsite auth)
           (dabsite db)
           (dabsite util)
-          (dabsite auth)
           (dabsite views))
   (export install-files-routes!
           ;; exposed for tests
@@ -70,7 +68,6 @@
                        (filename-escape clean-name)
                        "\"")))
 
-    (define nul-char (integer->char 0))
     (define (header-clean s)
       ;; Strip CR, LF, NUL — and any other control byte that has no
       ;; place in an HTTP header value.
@@ -266,9 +263,6 @@
                            "WHEN 'public' THEN 'private' ELSE 'public' END "
                            "WHERE id = $1")
             (list id)))
-
-    (define (update-note! cfg id note)
-      (exec cfg "UPDATE files SET note = $1 WHERE id = $2" (list note id)))
 
     ;; ---- formatting ----
 

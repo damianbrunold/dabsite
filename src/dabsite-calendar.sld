@@ -1,22 +1,20 @@
 (define-library (dabsite calendar)
   (import (scheme base)
-          (scheme write)
           (scheme char)
           (scheme cxr)
-          (srfi 1)
+          (except (srfi 1) delete!)
           (srfi 13)
           (scm database postgres)
-          (scm net http request)
-          (scm net http response)
-          (scm net http route)
-          (scm net http forms)
           (scm html builder)
-          (scm uri)
-          (dabsite db)
-          (dabsite util)
+          (scm net http forms)
+          (scm net http request)
+          (except (scm net http response) html-response)
+          (scm net http route)
           (dabsite auth)
-          (dabsite views)
-          (dabsite events))
+          (dabsite db)
+          (dabsite events)
+          (dabsite util)
+          (dabsite views))
   (export install-calendar-routes!
           ;; pure helpers exposed for tests
           date+days
@@ -967,7 +965,6 @@
                       (v2 (row-field row "v2"))
                       (v3 (row-field row "v3"))
                       (d (parse-iso-date day))
-                      (col (event-kind-colour kind))
                       (lbl (format-event-label kind v1 v2 v3)))
                  (list (cons 'id (string-append "ev-" kind "-" day))
                        (cons 'href "/events")
@@ -1078,15 +1075,6 @@
                                    (cons 'body-class
                                          "feeds-page calendar-page"))
                                   (html->string body))))
-
-    (define (today-date)
-      ;; Reads the current date from the postgres clock so it matches
-      ;; the server tz used everywhere else. We don't actually need DB
-      ;; here at startup, so just use the host system clock via the
-      ;; (scheme time) library wouldn't help portably; use a side-effect-
-      ;; free approximation: parse from a postgres call inside routes
-      ;; instead. This helper is overridden by request-time helpers.
-      '(2026 1 1))
 
     (define (db-today cfg)
       (let ((rs (rows cfg "SELECT to_char(now()::date, 'YYYY-MM-DD')")))
@@ -1236,8 +1224,7 @@
       (let ((p (assq 'extra-class occ))) (if p (cdr p) "")))
 
     (define (occurrence-row-sxml occ)
-      (let* ((id (cdr (assq 'id occ)))
-             (title (cdr (assq 'title occ)))
+      (let* ((title (cdr (assq 'title occ)))
              (location (cdr (assq 'location occ)))
              (category (cdr (assq 'category occ)))
              (colour (cdr (assq 'colour occ)))
@@ -1431,8 +1418,7 @@
                 "+"))))
 
     (define (month-chip-sxml occ)
-      (let ((id (cdr (assq 'id occ)))
-            (title (cdr (assq 'title occ)))
+      (let ((title (cdr (assq 'title occ)))
             (colour (cdr (assq 'colour occ)))
             (extra (occ-extra-class occ))
             (all-day? (cdr (assq 'all-day occ)))

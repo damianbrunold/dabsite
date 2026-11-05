@@ -2,12 +2,10 @@
 
 (import (scheme base)
         (scheme process-context)
-        (scheme write)
         (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (srfi 1)
-        (srfi 64)
+(import (srfi 64)
         (scm test)
         (dabsite calendar))
 

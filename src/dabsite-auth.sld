@@ -5,7 +5,6 @@
           (scm crypto password)
           (scm html builder)
           (scm net http forms)
-          (scm net http request)
           (scm net http response)
           (scm net http route)
           (scm net http session)

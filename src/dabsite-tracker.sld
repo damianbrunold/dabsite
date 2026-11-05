@@ -1,20 +1,18 @@
 (define-library (dabsite tracker)
   (import (scheme base)
-          (scheme write)
           (scheme char)
-          (scheme cxr)
-          (srfi 1)
+          (except (srfi 1) delete!)
           (srfi 13)
           (scm database postgres)
-          (scm net http request)
-          (scm net http response)
-          (scm net http route)
-          (scm net http forms)
           (scm html builder)
+          (scm net http forms)
+          (scm net http request)
+          (except (scm net http response) html-response)
+          (scm net http route)
           (scm uri)
+          (dabsite auth)
           (dabsite db)
           (dabsite util)
-          (dabsite auth)
           (dabsite views))
   (export install-tracker-routes!
           ;; exposed for tests
@@ -159,26 +157,6 @@
                                      ""
                                      "WHERE archived = false ")
                                  "ORDER BY name")))
-
-    (define (find-topic-id cfg name)
-      (let
-          ((rs (rows cfg
-                     "SELECT id FROM tracker_topics WHERE lower(name) = lower($1) ORDER BY id LIMIT 1"
-                     (list name))))
-        (and (pair? rs) (string->number (vector-ref (car rs) 0)))))
-
-    (define (ensure-topic! cfg name)
-      ;; Returns the topic id (creates if missing).
-      (let ((existing (find-topic-id cfg name)))
-        (cond (existing existing)
-              (else (with-db cfg
-                      (lambda (c)
-                        (let
-                            ((res (pg-query c
-                                            "INSERT INTO tracker_topics (name) VALUES ($1) RETURNING id"
-                                            name)))
-                          (string->number
-                           (vector-ref (car (pg-result-rows res)) 0)))))))))
 
     (define (create-topic! cfg name)
       (exec cfg

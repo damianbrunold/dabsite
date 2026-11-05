@@ -9,7 +9,6 @@
 
 (import (scheme base)
         (scheme process-context)
-        (scheme write)
         (scm module))
 
 (module-search-path! (cons "src" (module-search-path)))
@@ -18,7 +17,6 @@
         (srfi 18)
         (srfi 64)
         (scm net http client)
-        (scm net http request)
         (scm net http response)
         (scm net http route)
         (scm net http server)

@@ -1,19 +1,15 @@
 (define-library (dabsite events)
   (import (scheme base)
-          (scheme write)
           (scheme cxr)
-          (srfi 1)
+          (except (srfi 1) delete!)
           (srfi 13)
-          (scm database postgres)
-          (scm net http request)
-          (scm net http response)
-          (scm net http route)
-          (scm net http forms)
           (scm html builder)
-          (scm uri)
-          (dabsite db)
-          (dabsite util)
+          (scm net http forms)
+          (scm net http request)
+          (except (scm net http response) html-response)
+          (scm net http route)
           (dabsite auth)
+          (dabsite util)
           (dabsite views))
   (export install-events-routes!
           ;; helpers shared with calendar overlay
@@ -228,11 +224,6 @@
                                         (cons 'body-class "events-page"))
                                   (html->string body))))
 
-    (define (assq-ref alist key)
-      (let ((p (assq key alist)))
-        (cond (p (cdr p))
-              (else #f))))
-
     (define (indicator-button kind)
       (let ((key (car kind))
             (label (cadr kind)))
@@ -292,17 +283,6 @@
                                    (placeholder "75.0")))))
              (button (@ (type "submit") (class "ev-record")) "Aufzeichnen")))
 
-    (define (when-fieldset)
-      `(details (@ (class "ev-when"))
-                (summary "Anderer Zeitpunkt")
-                (label "Aufzeichnungszeit "
-                       (input (@ (type "datetime-local")
-                                 (name "recorded")
-                                 (form "ev-when-form"))))
-                (p (@ (class "ev-hint"))
-                   "Leer = jetzt. Beim Setzen gilt der Zeitpunkt für die nächste "
-                   "Aufzeichnung — Knopf drücken nach Wahl der Zeit.")))
-
     ;; We avoid wiring the "when" picker across the per-button forms
     ;; (would need JS to copy the value); instead we render one extra
     ;; explicit form below the buttons for the rare backfill case.
@@ -359,7 +339,6 @@
       (let* ((id (row-field e "id"))
              (kind (row-field e "kind"))
              (label (event-kind-label kind))
-             (colour (event-kind-colour kind))
              (when-s (row-field e "recorded"))
              (val (event-value-summary e)))
         `(tr (td (@ (class "ev-when-c")) ,when-s)
@@ -506,8 +485,7 @@
                     ,(num->str ymin-p))
               ;; series paths + points
               ,@(append-map (lambda (s)
-                              (let ((label (car s))
-                                    (col (cadr s))
+                              (let ((col (cadr s))
                                     (values (caddr s)))
                                 (cons `(path
                                         (@ (d ,(path-of values))
@@ -566,25 +544,6 @@
              (label (event-kind-label kind))
              (mode (event-kind-mode kind))
              (avg-w (max 0 (or avg-window 0)))
-             (link (lambda (params extra)
-                     (string-append "/events/report?"
-                                    (string-join
-                                     (filter
-                                      (lambda (s) (not (string=? s "")))
-                                      (list
-                                       (string-append "kind=" kind)
-                                       (if
-                                        (non-empty-string? from*)
-                                        (string-append "from="
-                                                       (percent-encode from*))
-                                        "")
-                                       (if
-                                        (non-empty-string? to*)
-                                        (string-append "to="
-                                                       (percent-encode to*))
-                                        "")
-                                       extra))
-                                     "&"))))
              (body `((header (@ (class "feeds-head"))
                              (h1 ,(string-append label " Report"))
                              (a (@ (class "admin-link") (href "/events"))
