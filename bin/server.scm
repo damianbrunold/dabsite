@@ -5,11 +5,11 @@
 ;; expected bindings.
 
 (import (scheme base)
-        (scheme write)
         (scheme load)
         (scheme process-context)
-        (scm module)
-        (scm fs))
+        (scheme write)
+        (scm fs)
+        (scm module))
 
 ;; Resolve the project root from this script's location so the server can be
 ;; launched from anywhere. command-line returns the script path as arg 0.
@@ -18,17 +18,14 @@
          (this (car argv)))
     (directory-name (absolute-path this))))
 
-(define root
-  (let ((bin-dir (project-root)))
-    (directory-name bin-dir)))
+(define root (let ((bin-dir (project-root))) (directory-name bin-dir)))
 
 ;; Make src/ importable.
-(module-search-path! (cons (string-append root "/src")
-                           (module-search-path)))
+(module-search-path! (cons (string-append root "/src") (module-search-path)))
 
-(import (dabsite db)
+(import (dabsite app)
         (dabsite auth)
-        (dabsite app))
+        (dabsite db))
 
 (define (config-path)
   (let ((args (cdr (command-line))))
@@ -37,21 +34,22 @@
 
 (define cfg-path (config-path))
 (when (not (file-exists? cfg-path))
-  (display "config file not found: ") (display cfg-path) (newline)
-  (display "copy config.example.scm to config.scm and edit it.") (newline)
+  (display "config file not found: ")
+  (display cfg-path)
+  (newline)
+  (display "copy config.example.scm to config.scm and edit it.")
+  (newline)
   (exit 1))
 
 (load cfg-path)
 
 ;; Resolve relative paths against the project root.
 (define (abs-path p)
-  (if (and (> (string-length p) 0)
-           (char=? (string-ref p 0) #\/))
+  (if (and (> (string-length p) 0) (char=? (string-ref p 0) #\/))
       p
       (string-append root "/" p)))
 
-(define dbcfg
-  (make-db-config db-host db-port db-user db-password db-name))
+(define dbcfg (make-db-config db-host db-port db-user db-password db-name))
 
 (run-migrations! dbcfg (abs-path migrations-dir))
 
@@ -61,8 +59,7 @@
 
 (set-site-lang! default-site-lang)
 
-(serve http-port
-       http-host
+(serve http-port http-host
        (abs-path static-dir)
        (abs-path files-dir)
        dbcfg

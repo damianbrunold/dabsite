@@ -8,22 +8,22 @@
 ;; Run from the project root: scm tests/test_smoke.scm
 
 (import (scheme base)
-        (scheme write)
         (scheme process-context)
+        (scheme write)
         (scm module))
 
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (dabsite app)
-        (scm test)
-        (scm net http server)
-        (scm net http route)
+(import (srfi 13)
+        (srfi 18)
+        (srfi 64)
+        (scm net http client)
         (scm net http request)
         (scm net http response)
-        (scm net http client)
-        (srfi 13)
-        (srfi 18)
-        (srfi 64))
+        (scm net http route)
+        (scm net http server)
+        (scm test)
+        (dabsite app))
 
 (define port 18099)
 (define base (string-append "http://127.0.0.1:" (number->string port)))
@@ -33,13 +33,17 @@
 (define server-handle
   (tcp-http-serve port
                   (lambda (req)
-                    (let ((resp ((lambda (r)
-                                   (guard (exn (#t (make-http-response
-                                                     500
-                                                     '(("Content-Type" . "text/plain"))
-                                                     "test server error")))
-                                     (router-dispatch router r)))
-                                 req)))
+                    (let
+                        ((resp ((lambda (r)
+                                  (guard
+                                      (exn
+                                       (#t
+                                        (make-http-response
+                                         500
+                                         '(("Content-Type" . "text/plain"))
+                                         "test server error")))
+                                    (router-dispatch router r)))
+                                req)))
                       resp))
                   0
                   "127.0.0.1"))
@@ -60,7 +64,7 @@
     (test-eqv "200" 200 (http-response-status r))
     (test-assert "body contains css rule"
                  (let* ((body (http-response-body r))
-                        (s    (if (string? body) body (utf8->string body))))
+                        (s (if (string? body) body (utf8->string body))))
                    (not (not (string-contains s "body")))))))
 
 (test-group "unknown route"
@@ -68,7 +72,9 @@
     (test-eqv "404" 404 (http-response-status r))))
 
 (test-group "path traversal"
-  (let ((r (http-get (string-append base "/static/../config.example.scm") '())))
+  (let
+      ((r (http-get (string-append base "/static/../config.example.scm")
+                    '())))
     (test-assert "rejected" (not (= 200 (http-response-status r))))))
 
 (test-end "stage1-smoke")

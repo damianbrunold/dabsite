@@ -1,17 +1,16 @@
 (define-library (dabsite db)
   (import (scheme base)
+          (rename (scm database migrations) (run-migrations! migrations-run!))
           (scm database postgres)
-          (rename (scm database migrations)
-                  (run-migrations! migrations-run!))
           (scm log))
-  (export db-config
-          make-db-config
-          with-db
+  (export db-alist
+          db-config
           db-exec
           db-query
           db-rows
-          db-alist
-          run-migrations!)
+          make-db-config
+          run-migrations!
+          with-db)
   (begin
 
     ;; A db-config carries the connection params plus an attached
@@ -21,12 +20,12 @@
     (define-record-type db-config
       (%make-db-config-record host port user password database pool)
       db-config?
-      (host     db-config-host)
-      (port     db-config-port)
-      (user     db-config-user)
+      (host db-config-host)
+      (port db-config-port)
+      (user db-config-user)
       (password db-config-password)
       (database db-config-database)
-      (pool     db-config-pool))
+      (pool db-config-pool))
 
     (define default-pool-capacity 8)
 
@@ -35,24 +34,20 @@
        argument is the pool capacity (default 8)."
       (let ((capacity (cond ((pair? opt) (car opt))
                             (else default-pool-capacity))))
-        (%make-db-config-record
-          host port user password database
-          (make-pg-pool host port user password database capacity))))
+        (%make-db-config-record host port user password database
+                                (make-pg-pool host port user password database
+                                              capacity))))
 
     (define (with-db cfg proc)
       (with-pg-pool-connection (db-config-pool cfg) proc))
 
-    (define (db-exec cfg sql)
-      (with-db cfg (lambda (c) (pg-exec c sql))))
+    (define (db-exec cfg sql) (with-db cfg (lambda (c) (pg-exec c sql))))
 
-    (define (db-query cfg sql)
-      (with-db cfg (lambda (c) (pg-query c sql))))
+    (define (db-query cfg sql) (with-db cfg (lambda (c) (pg-query c sql))))
 
-    (define (db-rows cfg sql)
-      (pg-result-rows (db-query cfg sql)))
+    (define (db-rows cfg sql) (pg-result-rows (db-query cfg sql)))
 
-    (define (db-alist cfg sql)
-      (pg-result->alist-list (db-query cfg sql)))
+    (define (db-alist cfg sql) (pg-result->alist-list (db-query cfg sql)))
 
     ;; --- Migrations ---
     ;;
@@ -65,11 +60,9 @@
       "Apply any pending SQL migrations from dir. Idempotent."
       (with-db cfg
         (lambda (conn)
-          (log-info "migrate"
-                    (string-append "running migrations from " dir))
-          (migrations-run!
-            (lambda (sql) (pg-exec conn sql))
-            (lambda (sql) (pg-result-rows (pg-query conn sql)))
-            dir
-            `((log-proc ,(lambda (m) (log-info "migrate" m))))))))
-))
+          (log-info "migrate" (string-append "running migrations from " dir))
+          (migrations-run! (lambda (sql) (pg-exec conn sql))
+                           (lambda (sql) (pg-result-rows (pg-query conn sql)))
+                           dir
+                           `((log-proc ,(lambda (m)
+                                          (log-info "migrate" m))))))))))

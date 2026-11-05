@@ -1,26 +1,29 @@
 ;; Unit tests for (dabsite files) — pure helpers only.
 
-(import (scheme base) (scheme write) (scheme process-context) (scm module))
+(import (scheme base)
+        (scheme process-context)
+        (scheme write)
+        (scm module))
 (module-search-path! (cons "src" (module-search-path)))
 
-(import (dabsite files) (scm test) (srfi 64))
+(import (srfi 64)
+        (scm test)
+        (dabsite files))
 
 (test-runner-factory scm-test-runner)
 (test-begin "files")
 
 (test-group "mime-from-name"
-  (test-equal "image/png"  (mime-from-name "icon.png"))
+  (test-equal "image/png" (mime-from-name "icon.png"))
   (test-equal "image/jpeg" (mime-from-name "PHOTO.JPG"))
   (test-equal "application/pdf" (mime-from-name "doc.pdf"))
-  (test-equal "application/octet-stream"
-              (mime-from-name "weird"))
-  (test-equal "text/plain; charset=utf-8"
-              (mime-from-name "notes.txt")))
+  (test-equal "application/octet-stream" (mime-from-name "weird"))
+  (test-equal "text/plain; charset=utf-8" (mime-from-name "notes.txt")))
 
 (test-group "safe-public-name"
-  (test-equal "x.png"      (safe-public-name "x.png"))
-  (test-equal "photo.jpg"  (safe-public-name "/tmp/photo.jpg"))
-  (test-equal "photo.jpg"  (safe-public-name "C:\\users\\x\\photo.jpg"))
+  (test-equal "x.png" (safe-public-name "x.png"))
+  (test-equal "photo.jpg" (safe-public-name "/tmp/photo.jpg"))
+  (test-equal "photo.jpg" (safe-public-name "C:\\users\\x\\photo.jpg"))
   (test-eqv #f (safe-public-name ""))
   (test-eqv #f (safe-public-name #f))
   (test-eqv #f (safe-public-name "../etc/passwd"))

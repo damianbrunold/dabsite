@@ -46,8 +46,7 @@
       ;; (scm net http static) refuses traversal and dot-files, and
       ;; caches the ?v= URLs of static-url for good.
       (set-static-dir! static-dir)
-      (router-add! router "GET" "/static/*"
-        (make-static-handler static-dir))
+      (router-add! router "GET" "/static/*" (make-static-handler static-dir))
       ;; Well-known root paths the browser asks for unprompted.
       (router-add! router "GET" "/robots.txt"
         (well-known-static-handler static-dir "robots.txt"))
@@ -59,17 +58,17 @@
     (define (build-router static-dir files-dir db-cfg auth secure-cookies?)
       (let ((router (make-router)))
         (install-core-routes! router)
-        (install-auth-routes!     router auth)
-        (install-landing-routes!  router db-cfg auth)
-        (install-notepad-routes!  router db-cfg auth)
-        (install-feed-routes!      router db-cfg auth)
+        (install-auth-routes! router auth)
+        (install-landing-routes! router db-cfg auth)
+        (install-notepad-routes! router db-cfg auth)
+        (install-feed-routes! router db-cfg auth)
         (install-shortener-routes! router db-cfg auth)
-        (install-poll-routes!      router db-cfg auth secure-cookies?)
-        (install-tracker-routes!   router db-cfg auth)
-        (install-files-routes!     router db-cfg auth files-dir)
-        (install-grocery-routes!   router db-cfg auth)
-        (install-calendar-routes!  router db-cfg auth)
-        (install-events-routes!    router db-cfg auth)
+        (install-poll-routes! router db-cfg auth secure-cookies?)
+        (install-tracker-routes! router db-cfg auth)
+        (install-files-routes! router db-cfg auth files-dir)
+        (install-grocery-routes! router db-cfg auth)
+        (install-calendar-routes! router db-cfg auth)
+        (install-events-routes! router db-cfg auth)
         ;; static is registered last so the dynamic routes match first.
         (install-static-routes! router static-dir)
         router))
@@ -84,10 +83,10 @@
 
     ;; ---------------- entry point ----------------
 
-    (define (serve port host static-dir files-dir
-                   db-cfg auth secure-cookies?)
-      (let ((router (build-router static-dir files-dir
-                                  db-cfg auth secure-cookies?)))
+    (define (serve port host static-dir files-dir db-cfg auth secure-cookies?)
+      (let
+          ((router (build-router static-dir files-dir db-cfg auth
+                                 secure-cookies?)))
         (start-feed-scheduler! db-cfg)
         (log-info "boot"
                   (string-append "listening on http://" host ":"
@@ -103,13 +102,12 @@
         ;; or styles.
         (serve-forever port
                        (with-access-log
-                         (with-security-headers
-                           (with-error-handler (router->handler router)
-                             (lambda (req)
-                               (render-error 500 "Something went wrong.")))))
+                           (with-security-headers
+                               (with-error-handler (router->handler router)
+                                 (lambda (req)
+                                   (render-error 500
+                                                 "Something went wrong.")))))
                        0
                        host
-                       300000       ; read-timeout-ms (5 min, room for slow uploads)
-                       (* 26 1024 1024))))  ; max-body-bytes (26 MB)
-
-))
+                       300000 ; read-timeout-ms (5 min, room for slow uploads)
+                       (* 26 1024 1024)))))) ; max-body-bytes (26 MB)

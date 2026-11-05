@@ -4,8 +4,8 @@
 ;; just define the bindings below.
 
 ;; --- HTTP ---
-(define http-port  8088)
-(define http-host  "127.0.0.1")   ; bind only loopback; reverse proxy fronts it
+(define http-port 8088)
+(define http-host "127.0.0.1") ; bind only loopback; reverse proxy fronts it
 
 ;; --- Paths ---
 ;; static-dir is served at /static/. Defaults to ./static next to bin/server.scm.
@@ -17,11 +17,11 @@
 (define files-dir "data/files")
 
 ;; --- Database ---
-(define db-host     "127.0.0.1")
-(define db-port     5432)
-(define db-user     "dabsite")
+(define db-host "127.0.0.1")
+(define db-port 5432)
+(define db-user "dabsite")
 (define db-password "change-me")
-(define db-name     "dabsite")
+(define db-name "dabsite")
 
 ;; --- Auth ---
 ;; Generate with: scm bin/hash-passphrase.scm 'your passphrase here'
@@ -35,7 +35,7 @@
 
 ;; Cookie name and session lifetime (seconds), enforced by the signed
 ;; cookie itself, not just the browser. 10 years by default.
-(define cookie-name    "damian_auth")
+(define cookie-name "damian_auth")
 (define cookie-max-age (* 60 60 24 365 10))
 
 ;; When #t, the auth cookie is marked Secure (HTTPS only). Production

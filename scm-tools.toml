@@ -1,0 +1,13 @@
+# Settings for `scm fmt` and `scm lint` (built into dabscm 2.21 and later).
+
+[format]
+width = 78
+# where the app's own libraries live, so imports can be resolved
+library-path = ["src"]
+
+[format.indent]
+# number of distinguished arguments before the body (Emacs style)
+"router-add!" = 3
+
+[lint]
+docstring-libraries = []

@@ -3,24 +3,24 @@
           (srfi 18)
           (scm crypto)
           (scm crypto password)
+          (scm html builder)
+          (scm net http forms)
           (scm net http request)
           (scm net http response)
           (scm net http route)
-          (scm net http forms)
           (scm net http session)
-          (scm net http static)
-          (scm html builder))
-  (export make-auth
-          auth?
+          (scm net http static))
+  (export auth?
           authed?
-          verify-passphrase
-          login-cookie
           install-auth-routes!
+          login-cookie
+          make-auth
           require-auth
-          site-lang
           set-site-lang!
           set-static-dir!
-          static-url)
+          site-lang
+          static-url
+          verify-passphrase)
   (begin
 
     ;; Site-wide default for <html lang="…">. server.scm sets this from
@@ -42,17 +42,18 @@
     (define-record-type auth
       (make-auth-record session passphrase-hash)
       auth?
-      (session         auth-session)
+      (session auth-session)
       (passphrase-hash auth-passphrase-hash))
 
     ;; cookie-secret: base64, or a list of them (newest first) while
     ;; rotating keys; a short or malformed one raises here, at startup.
-    (define (make-auth cookie-name cookie-secret cookie-max-age
-                       passphrase-hash secure-cookies?)
-      (make-auth-record
-        (make-session-config cookie-name cookie-secret cookie-max-age
-                             `((secure? . ,secure-cookies?)))
-        passphrase-hash))
+    (define
+        (make-auth cookie-name cookie-secret cookie-max-age passphrase-hash
+                   secure-cookies?)
+      (make-auth-record (make-session-config cookie-name cookie-secret
+                                             cookie-max-age
+                                             `((secure? . ,secure-cookies?)))
+                        passphrase-hash))
 
     ;; --- passphrase ---
     ;;
@@ -69,16 +70,18 @@
     ;; not only by the browser.
 
     (define (passphrase-stamp auth)
-      (base64-encode
-        (bytevector-copy
-          (sha256-hash (string->utf8 (auth-passphrase-hash auth))) 0 12)))
+      (base64-encode (bytevector-copy (sha256-hash
+                                       (string->utf8
+                                        (auth-passphrase-hash auth)))
+                                      0
+                                      12)))
 
     (define (login-cookie auth)
       (session-set-cookie (auth-session auth)
                           `((pw . ,(passphrase-stamp auth)))))
 
     (define (authed? auth req)
-      (let* ((s  (session-ref (auth-session auth) req))
+      (let* ((s (session-ref (auth-session auth) req))
              (pw (and (pair? s) (assq 'pw s))))
         (and pw (equal? (cdr pw) (passphrase-stamp auth)))))
 
@@ -88,28 +91,37 @@
       (make-http-response 302 (cons (cons "Location" to) headers) ""))
 
     (define (login-page-html error?)
-      (html->string
-        (html5
-          `(@ (lang ,(site-lang)))
-          `(head (meta (@ (charset "utf-8")))
-                 (title "Login")
-                 (link (@ (rel "stylesheet") (href ,(static-url "site.css")))))
-          `(body (main (@ (class "login"))
-                       (h1 "Login")
-                       ,@(if error?
-                             `((p (@ (class "error")) "Wrong passphrase."))
-                             '())
-                       (form (@ (method "post") (action "/login"))
-                         (label "Passphrase "
-                           (input (@ (type "password") (name "passphrase")
-                                     (autocomplete "current-password")
-                                     (autofocus #t) (required #t))))
-                         (button (@ (type "submit")) "Sign in")))))))
+      (html->string (html5 `(@ (lang ,(site-lang)))
+                           `(head (meta (@ (charset "utf-8")))
+                                  (title "Login")
+                                  (link
+                                   (@ (rel "stylesheet")
+                                      (href ,(static-url "site.css")))))
+                           `(body (main
+                                   (@ (class "login"))
+                                   (h1 "Login")
+                                   ,@(if
+                                      error?
+                                      `((p (@ (class "error"))
+                                           "Wrong passphrase."))
+                                      '())
+                                   (form
+                                    (@ (method "post") (action "/login"))
+                                    (label
+                                     "Passphrase "
+                                     (input
+                                      (@ (type "password")
+                                         (name "passphrase")
+                                         (autocomplete "current-password")
+                                         (autofocus #t)
+                                         (required #t))))
+                                    (button (@ (type "submit"))
+                                            "Sign in")))))))
 
     (define (html-ok body)
       (make-http-response 200
-        '(("Content-Type" . "text/html; charset=utf-8"))
-        body))
+                          '(("Content-Type" . "text/html; charset=utf-8"))
+                          body))
 
     ;; --- routes ---
 
@@ -123,15 +135,14 @@
       (router-add! router "POST" "/login"
         (lambda (req params)
           (let ((pw (form-ref (http-request-form req) "passphrase" "")))
-            (cond
-              ((verify-passphrase auth pw)
-               (redirect "/" (login-cookie auth)))
-              (else
-               ;; Constant-ish delay on failure caps the rate at ~2
-               ;; attempts/sec/connection, taking online brute-force
-               ;; from "feasible" to "needs a botnet".
-               (thread-sleep! 0.5)
-               (html-ok (login-page-html #t)))))))
+            (cond ((verify-passphrase auth pw)
+                   (redirect "/" (login-cookie auth)))
+                  (else
+                   ;; Constant-ish delay on failure caps the rate at ~2
+                   ;; attempts/sec/connection, taking online brute-force
+                   ;; from "feasible" to "needs a botnet".
+                   (thread-sleep! 0.5)
+                   (html-ok (login-page-html #t)))))))
 
       (router-add! router "POST" "/logout"
         (lambda (req params)
@@ -141,8 +152,4 @@
 
     (define (require-auth auth handler)
       (lambda (req params)
-        (if (authed? auth req)
-            (handler req params)
-            (redirect "/login"))))
-
-))
+        (if (authed? auth req) (handler req params) (redirect "/login"))))))

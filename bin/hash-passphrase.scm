@@ -4,8 +4,8 @@
 ;; Paste the output into config.scm as auth-passphrase-hash.
 
 (import (scheme base)
-        (scheme write)
         (scheme process-context)
+        (scheme write)
         (scm crypto password))
 
 (define (main args)
